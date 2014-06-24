@@ -926,7 +926,8 @@ BatchReactor::GetOrder_(double size) {
     recipe = crctx_.in_recipe(*it);
     assert(recipe != "");
     mat = Material::CreateUntracked(size, context()->GetRecipe(recipe));
-    Request<Material>* r = port->AddRequest(mat, this, *it, commod_prefs_[*it]);
+    Request<Material>* r = port->AddRequest(mat, this, *it, commod_prefs_[*it],
+                                            true);
     mreqs.push_back(r);
 
     LOG(cyclus::LEV_DEBUG3, "BReact") << "BatchReactor " << prototype()
