@@ -22,6 +22,7 @@ BatchReactor::BatchReactor(cyclus::Context* ctx)
       n_load_(1),
       n_reserves_(0),
       batch_size_(1),
+      invpolicy_(this),
       phase_(INITIAL) {
   cyclus::Warn<cyclus::EXPERIMENTAL_WARNING>("the BatchReactor agent "
                                              "is considered experimental.");
@@ -29,6 +30,32 @@ BatchReactor::BatchReactor(cyclus::Context* ctx)
     SetUpPhaseNames_();
   }
   spillover_ = cyclus::NewBlankMaterial(0);
+}
+
+void BatchReactor::EnterNotify() {
+  cyclus::Facility::EnterNotify();
+  invpolicy_.Init(&reserves_, batch_size_);
+  corepolicy_.Init(&core_, batch_size_);
+  UpdatePolicy();
+  context()->RegisterTrader(&invpolicy_);
+}
+
+void BatchReactor::UpdatePolicy() {
+  std::set<std::string> commods = crctx_.in_commods();
+  std::set<std::string>::iterator it;
+  for (it = commods.begin(); it != commods.end(); ++it) {
+    std::string commod = *it;
+    std::string inrecipe = crctx_.in_recipe(commod);
+    double pref = commod_prefs_[commod];
+    invpolicy_.Set(*it, inrecipe, pref);
+    corepolicy_.Set(*it, inrecipe, pref);
+  }
+}
+
+void BatchReactor::Decommission() {
+  context()->UnregisterTrader(&invpolicy_);
+  context()->UnregisterTrader(&corepolicy_);
+  cyclus::Facility::Decommission();
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -194,6 +221,8 @@ void BatchReactor::InitFrom(cyclus::QueryableBackend* b) {
   n_reserves_ = qr.GetVal<int>("norder");
   batch_size_ = qr.GetVal<double>("batchsize");
   phase_ = static_cast<Phase>(qr.GetVal<int>("phase"));
+  reserves_.set_capacity(batch_size_*n_reserves_);
+  core_.set_capacity(batch_size_*n_batches_);
 
   std::string out_commod = qr.GetVal<std::string>("out_commod");
   cyclus::toolkit::CommodityProducer::Add(out_commod);
@@ -248,7 +277,7 @@ void BatchReactor::InitFrom(cyclus::QueryableBackend* b) {
     pref_changes_[t].push_back(std::make_pair(c, new_pref));
   }
 
-  // pref changes
+  // recipe changes
   try {
     qr.Reset();
     qr = b->Query("RecipeChanges", NULL);
@@ -506,6 +535,8 @@ void BatchReactor::InitFrom(BatchReactor* m) {
   n_load(m->n_load());
   n_reserves(m->n_reserves());
   batch_size(m->batch_size());
+  reserves_.set_capacity(m->reserves_.capacity());
+  core_.set_capacity(m->core_.capacity());
 
   // commodity production
   cyclus::toolkit::CommodityProducer::Copy(m);
@@ -627,6 +658,7 @@ void BatchReactor::Tick() {
     for (int i = 0; i < changes.size(); i++) {
       commod_prefs_[changes[i].first] = changes[i].second;
     }
+    UpdatePolicy();
   }
 
   // change recipes if its time
@@ -638,6 +670,7 @@ void BatchReactor::Tick() {
       assert(changes[i].second != "");
       crctx_.UpdateInRec(changes[i].first, changes[i].second);
     }
+    UpdatePolicy();
   }
 
   LOG(cyclus::LEV_DEBUG3, "BReact") << "Current facility parameters for "
@@ -687,6 +720,17 @@ void BatchReactor::Tock() {
       break;
   }
 
+  // update commod recipe context with mats received via inv policies
+  std::map<Material::Ptr, std::string> recv = invpolicy_.Commods();
+  std::map<Material::Ptr, std::string>::iterator it;
+  for (it = recv.begin(); it != recv.end(); ++it) {
+    crctx_.AddRsrc(it->second, it->first);
+  }
+  recv = corepolicy_.Commods();
+  for (it = recv.begin(); it != recv.end(); ++it) {
+    crctx_.AddRsrc(it->second, it->first);
+  }
+
   LOG(cyclus::LEV_DEBUG3, "BReact") << "Current facility parameters for "
                                     << prototype()
                                     << " at the end of the tock are:";
@@ -700,92 +744,6 @@ void BatchReactor::Tock() {
   LOG(cyclus::LEV_DEBUG3, "BReact") << "    Spillover Qty: "
                                     << spillover_->quantity();
   LOG(cyclus::LEV_INFO3, "BReact") << "}";
-}
-
-// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-std::set<cyclus::RequestPortfolio<cyclus::Material>::Ptr>
-BatchReactor::GetMatlRequests() {
-  using cyclus::RequestPortfolio;
-  using cyclus::Material;
-
-  std::set<RequestPortfolio<Material>::Ptr> set;
-  double order_size;
-
-  switch (phase()) {
-    // the initial phase requests as much fuel as necessary to achieve an entire
-    // core
-    case INITIAL:
-      order_size = n_batches() * batch_size()
-                   - core_.quantity() - reserves_.quantity()
-                   - spillover_->quantity();
-      if (preorder_time() == 0) {
-        order_size += batch_size() * n_reserves();
-      }
-      if (order_size > 0) {
-        RequestPortfolio<Material>::Ptr p = GetOrder_(order_size);
-        set.insert(p);
-      }
-      break;
-
-    // the default case is to request the reserve amount if the order time has
-    // been reached
-    default:
-      // double fuel_need = (n_reserves() + n_batches() - n_core()) * batch_size();
-      double fuel_need = (n_reserves() + n_load()) * batch_size();
-      double fuel_have = reserves_.quantity() + spillover_->quantity();
-      order_size = fuel_need - fuel_have;
-      bool ordering = order_time() <= context()->time() && order_size > 0;
-
-      LOG(cyclus::LEV_DEBUG5, "BReact") << "BatchReactor " << prototype()
-                                        << " is deciding whether to order -";
-      LOG(cyclus::LEV_DEBUG5, "BReact") << "    Needs fuel amt: " << fuel_need;
-      LOG(cyclus::LEV_DEBUG5, "BReact") << "    Has fuel amt: " << fuel_have;
-      LOG(cyclus::LEV_DEBUG5, "BReact") << "    Order amt: " << order_size;
-      LOG(cyclus::LEV_DEBUG5, "BReact") << "    Order time: " << order_time();
-      LOG(cyclus::LEV_DEBUG5, "BReact") << "    Current time: "
-                                        << context()->time();
-      LOG(cyclus::LEV_DEBUG5, "BReact") << "    Ordering?: "
-                                        << ((ordering == true) ? "yes" : "no");
-
-      if (ordering) {
-        RequestPortfolio<Material>::Ptr p = GetOrder_(order_size);
-        set.insert(p);
-      }
-      break;
-  }
-
-  return set;
-}
-
-// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-void BatchReactor::AcceptMatlTrades(
-    const std::vector< std::pair<cyclus::Trade<cyclus::Material>,
-    cyclus::Material::Ptr> >& responses) {
-  using cyclus::Material;
-
-  std::map<std::string, Material::Ptr> mat_commods;
-
-  std::vector< std::pair<cyclus::Trade<cyclus::Material>,
-                         cyclus::Material::Ptr> >::const_iterator trade;
-
-  // blob each material by commodity
-  std::string commod;
-  Material::Ptr mat;
-  for (trade = responses.begin(); trade != responses.end(); ++trade) {
-    commod = trade->first.request->commodity();
-    mat = trade->second;
-    if (mat_commods.count(commod) == 0) {
-      mat_commods[commod] = mat;
-    } else {
-      mat_commods[commod]->Absorb(mat);
-    }
-  }
-
-  // add each blob to reserves
-  std::map<std::string, Material::Ptr>::iterator it;
-  for (it = mat_commods.begin(); it != mat_commods.end(); ++it) {
-    AddBatches_(it->first, it->second);
-  }
 }
 
 // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -906,70 +864,6 @@ void BatchReactor::MoveBatchOut_() {
   }
 }
 
-// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-cyclus::RequestPortfolio<cyclus::Material>::Ptr
-BatchReactor::GetOrder_(double size) {
-  using cyclus::CapacityConstraint;
-  using cyclus::Material;
-  using cyclus::RequestPortfolio;
-  using cyclus::Request;
-
-  RequestPortfolio<Material>::Ptr port(new RequestPortfolio<Material>());
-
-  const std::set<std::string>& commods = crctx_.in_commods();
-  std::set<std::string>::const_iterator it;
-  std::string recipe;
-  Material::Ptr mat;
-
-  std::vector<Request<Material>*> mreqs;
-  for (it = commods.begin(); it != commods.end(); ++it) {
-    recipe = crctx_.in_recipe(*it);
-    assert(recipe != "");
-    mat = Material::CreateUntracked(size, context()->GetRecipe(recipe));
-    Request<Material>* r = port->AddRequest(mat, this, *it, commod_prefs_[*it]);
-    mreqs.push_back(r);
-
-    LOG(cyclus::LEV_DEBUG3, "BReact") << "BatchReactor " << prototype()
-                                      << " is making an order:";
-    LOG(cyclus::LEV_DEBUG3, "BReact") << "          size: " << size;
-    LOG(cyclus::LEV_DEBUG3, "BReact") << "     commodity: " << *it;
-    LOG(cyclus::LEV_DEBUG3, "BReact") << "    preference: "
-                                      << commod_prefs_[*it];
-  }
-  port->AddMutualReqs(mreqs);
-
-  return port;
-}
-
-// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-void BatchReactor::AddBatches_(std::string commod, cyclus::Material::Ptr mat) {
-  using cyclus::Material;
-  using cyclus::ResCast;
-
-  LOG(cyclus::LEV_DEBUG3, "BReact") << "BatchReactor " << prototype()
-                                    << " is adding " << mat->quantity()
-                                    << " of material to its reserves.";
-
-  // this is a hack! Whatever *was* left in spillover now magically becomes this
-  // new commodity. We need to do something different (maybe) for recycle.
-  spillover_->Absorb(mat);
-
-  while (!cyclus::IsNegative(spillover_->quantity() - batch_size())) {
-    Material::Ptr batch;
-    // this is a hack to deal with close-to-equal issues between batch size and
-    // the amount of fuel in spillover
-    if (spillover_->quantity() >= batch_size()) {
-      batch = spillover_->ExtractQty(batch_size());
-    } else {
-      batch = spillover_->ExtractQty(spillover_->quantity());
-    }
-    assert(commod != "");
-    crctx_.AddRsrc(commod, batch);
-    reserves_.Push(batch);
-  }
-}
-
-// - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 cyclus::BidPortfolio<cyclus::Material>::Ptr BatchReactor::GetBids_(
     cyclus::CommodMap<cyclus::Material>::type& commod_requests,
     std::string commod,

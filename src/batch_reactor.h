@@ -6,6 +6,7 @@
 #include <string>
 
 #include "cyclus.h"
+#include "kitlus/kitlus.h"
 
 // forward declarations
 namespace cycamore {
@@ -380,6 +381,8 @@ class BatchReactor
   std::map<std::string, cyclus::toolkit::ResourceBuff> storage_;
 
  private:
+  void UpdatePolicy();
+
   /// @brief refuels the reactor until it is full or reserves_ is out of
   /// batches. If the core is full after refueling, the Phase is set to PROCESS.
   void Refuel_();
@@ -417,11 +420,6 @@ class BatchReactor
 
   cyclus::toolkit::CommodityRecipeContext crctx_;
 
-  /// @warning as is, the int key is **simulation time**, i.e., context()->time
-  /// == key. This should be fixed for future use!
-  std::map<int, std::vector< std::pair< std::string, std::string > > >
-      recipe_changes_;
-
   /// @brief preferences for each input commodity
   std::map<std::string, double> commod_prefs_;
 
@@ -429,12 +427,24 @@ class BatchReactor
   /// == key. This should be fixed for future use!
   std::map<int, std::vector< std::pair< std::string, double > > > pref_changes_;
 
+  /// @warning as is, the int key is **simulation time**, i.e., context()->time
+  /// == key. This should be fixed for future use!
+  std::map<int, std::vector< std::pair< std::string, std::string > > >
+      recipe_changes_;
+
   /// @brief allows only batches to enter reserves_
   cyclus::Material::Ptr spillover_;
 
   /// @brief a cyclus::toolkit::ResourceBuff for material before they enter the core,
   /// with all materials guaranteed to be of batch_size_
   cyclus::toolkit::ResourceBuff reserves_;
+
+  /// policy to manage reserves inventory
+  kitlus::BuyPolicy invpolicy_;
+
+  /// policy to fill core initilaly.  Otherwise, core is always already full
+  /// during resource exchange.
+  kitlus::BuyPolicy corepolicy_;
 
   friend class BatchReactorTest;
   // ---
