@@ -4,6 +4,95 @@
 #include <sstream>
 #include <cmath>
 
+using cyclus::CapacityConstraint;
+using cyclus::Material;
+using cyclus::RequestPortfolio;
+using cyclus::Trade;
+using cyclus::Bid;
+using cyclus::Request;
+using cyclus::PrefMap;
+using cyclus::Composition;
+
+namespace kitlus {
+
+void BuyPolicy::Init(cyclus::toolkit::ResourceBuff* buf, std::string name, double quantize) {
+  buf_ = buf;
+  quantize_ = quantize;
+  name_ = name;
+}
+
+void BuyPolicy::Set(std::string commod, cyclus::Composition::Ptr c, double pref) {
+  CommodDetail d;
+  d.comp = c;
+  d.pref = pref;
+  commods_[commod] = d;
+}
+
+std::set<RequestPortfolio<Material>::Ptr>
+BuyPolicy::GetMatlRequests() {
+  rsrc_commod_.clear();
+  std::set<RequestPortfolio<Material>::Ptr> ports;
+  double amt = buf_->space();
+  if (amt < cyclus::eps()) {
+    return ports;
+  }
+
+  double quanta = quantize_;
+  bool exclusive = true;
+  if (quantize_ < 0) {
+    exclusive = false;
+    quanta = amt;
+  }
+
+  std::cout << "policy " << name_ << " requesting " << amt << " kg\n";
+
+  RequestPortfolio<Material>::Ptr port(new RequestPortfolio<Material>());
+  std::map<std::string, CommodDetail>::iterator it;
+  for (it = commods_.begin(); it != commods_.end(); ++it) {
+    std::string commod = it->first;
+    CommodDetail d = it->second;
+    for (int i = 0; i < amt / quanta; i++) {
+      std::cout << "  - " << amt << " kg of " << commod << "\n";
+      Material::Ptr m = Material::CreateUntracked(quanta, d.comp);
+      port->AddRequest(m, this, commod, exclusive);
+    }
+  }
+
+  CapacityConstraint<Material> cc(amt);
+  port->AddConstraint(cc);
+  ports.insert(port);
+
+  return ports;
+}
+
+void BuyPolicy::AcceptMatlTrades(
+  const std::vector< std::pair<Trade<Material>,
+  Material::Ptr> >& resps) {
+  std::vector< std::pair<Trade<Material>, Material::Ptr> >::const_iterator it;
+  rsrc_commod_.clear();
+  for (it = resps.begin(); it != resps.end(); ++it) {
+    rsrc_commod_[it->second] = it->first.request->commodity();
+    std::cout << "policy " << name_ << " got " << it->second->quantity()
+              << " kg of " << it->first.request->commodity() << "\n";
+    buf_->Push(it->second);
+  }
+}
+
+void BuyPolicy::AdjustMatlPrefs(PrefMap<Material>::type& prefs) {
+  PrefMap<Material>::type::iterator it;
+  for (it = prefs.begin(); it != prefs.end(); ++it) {
+    Request<Material>* r = it->first;
+    double pref = commods_[r->commodity()].pref;
+    std::map<Bid<Material>*, double>::iterator it2;
+    std::map<Bid<Material>*, double> bids = it->second;
+    for (it2 = bids.begin(); it2 != bids.end(); ++it2) {
+      Bid<Material>* b = it2->first;
+      prefs[r][b] = pref;
+    }
+  }
+}
+
+} // namespace kitlus
 namespace cycamore {
 
 // static members
@@ -20,9 +109,10 @@ BatchReactor::BatchReactor(cyclus::Context* ctx)
       to_begin_time_(std::numeric_limits<int>::max()),
       n_batches_(1),
       n_load_(1),
-      n_reserves_(0),
+      n_reserves_(1),
       batch_size_(1),
       invpolicy_(this),
+      corepolicy_(this),
       phase_(INITIAL) {
   cyclus::Warn<cyclus::EXPERIMENTAL_WARNING>("the BatchReactor agent "
                                              "is considered experimental.");
@@ -34,10 +124,11 @@ BatchReactor::BatchReactor(cyclus::Context* ctx)
 
 void BatchReactor::EnterNotify() {
   cyclus::Facility::EnterNotify();
-  invpolicy_.Init(&reserves_, batch_size_);
-  corepolicy_.Init(&core_, batch_size_);
+  invpolicy_.Init(&reserves_, "reserves", batch_size_);
+  corepolicy_.Init(&core_, "core", batch_size_);
   UpdatePolicy();
   context()->RegisterTrader(&invpolicy_);
+  context()->RegisterTrader(&corepolicy_);
 }
 
 void BatchReactor::UpdatePolicy() {
@@ -45,10 +136,10 @@ void BatchReactor::UpdatePolicy() {
   std::set<std::string>::iterator it;
   for (it = commods.begin(); it != commods.end(); ++it) {
     std::string commod = *it;
-    std::string inrecipe = crctx_.in_recipe(commod);
+    Composition::Ptr c = context()->GetRecipe(crctx_.in_recipe(commod));
     double pref = commod_prefs_[commod];
-    invpolicy_.Set(*it, inrecipe, pref);
-    corepolicy_.Set(*it, inrecipe, pref);
+    invpolicy_.Set(*it, c, pref);
+    corepolicy_.Set(*it, c, pref);
   }
 }
 
@@ -584,6 +675,7 @@ void BatchReactor::Build(cyclus::Agent* parent) {
                            context()->GetRecipe(ics_.reserves_rec));
     assert(ics_.reserves_commod != "");
     crctx_.AddRsrc(ics_.reserves_commod, mat);
+    std::cout << "spot5\n";
     reserves_.Push(mat);
   }
   for (int i = 0; i < ics_.n_core; ++i) {
@@ -592,6 +684,7 @@ void BatchReactor::Build(cyclus::Agent* parent) {
                            context()->GetRecipe(ics_.core_rec));
     assert(ics_.core_commod != "");
     crctx_.AddRsrc(ics_.core_commod, mat);
+    std::cout << "spot6\n";
     core_.Push(mat);
   }
   for (int i = 0; i < ics_.n_storage; ++i) {
@@ -600,6 +693,7 @@ void BatchReactor::Build(cyclus::Agent* parent) {
                            context()->GetRecipe(ics_.storage_rec));
     assert(ics_.storage_commod != "");
     crctx_.AddRsrc(ics_.storage_commod, mat);
+    std::cout << "spot7\n";
     storage_[ics_.storage_commod].Push(mat);
   }
 
@@ -833,6 +927,7 @@ void BatchReactor::MoveBatchIn_() {
   LOG(cyclus::LEV_DEBUG2, "BReact") << "BatchReactor " << prototype()
                                     << " added a batch to its core.";
   try {
+    std::cout << "spot1\n";
     core_.Push(reserves_.Pop());
   } catch (cyclus::Error& e) {
     e.msg(Agent::InformErrorMsg(e.msg()));
@@ -857,6 +952,7 @@ void BatchReactor::MoveBatchOut_() {
     assert(outrecipe != "");
     mat->Transmute(context()->GetRecipe(outrecipe));
     crctx_.UpdateRsrc(outcommod, mat);
+    std::cout << "spot2\n";
     storage_[outcommod].Push(mat);
   } catch (cyclus::Error& e) {
     e.msg(Agent::InformErrorMsg(e.msg()));
@@ -886,6 +982,7 @@ cyclus::BidPortfolio<cyclus::Material>::Ptr BatchReactor::GetBids_(
     // get offer composition
     Material::Ptr back = ResCast<Material>(buffer->Pop(ResourceBuff::BACK));
     Composition::Ptr comp = back->comp();
+    std::cout << "spot3\n";
     buffer->Push(back);
 
     std::vector<Request<Material>*>::iterator it;
