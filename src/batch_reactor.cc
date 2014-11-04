@@ -15,18 +15,27 @@ using cyclus::Composition;
 
 namespace kitlus {
 
-void BuyPolicy::Init(cyclus::toolkit::ResourceBuff* buf, std::string name, double quantize) {
+#define LG(X) LOG(cyclus::LEV_##X, "kitlus")
+#define LGH(X) LOG(cyclus::LEV_##X, "kitlus") << "policy " << name_ << " (agent " << manager()->id() << "): "
+
+BuyPolicy& BuyPolicy::Init(cyclus::toolkit::ResourceBuff* buf, std::string name, double quantize) {
   buf_ = buf;
   quantize_ = quantize;
   name_ = name;
+  return *this;
 }
 
-void BuyPolicy::Set(std::string commod, cyclus::Composition::Ptr c, double pref) {
+BuyPolicy& BuyPolicy::Set(std::string commod, cyclus::Composition::Ptr c, double pref) {
   CommodDetail d;
   d.comp = c;
   d.pref = pref;
   commods_[commod] = d;
+  return *this;
 }
+
+std::map<cyclus::Material::Ptr, std::string> BuyPolicy::Commods() {
+  return rsrc_commod_;
+};
 
 std::set<RequestPortfolio<Material>::Ptr>
 BuyPolicy::GetMatlRequests() {
@@ -44,22 +53,26 @@ BuyPolicy::GetMatlRequests() {
     quanta = amt;
   }
 
-  std::cout << "policy " << name_ << " requesting " << amt << " kg\n";
+  LGH(INFO2) << "requesting " << amt << " kg";
 
   RequestPortfolio<Material>::Ptr port(new RequestPortfolio<Material>());
   std::map<std::string, CommodDetail>::iterator it;
+
+  std::map<int, std::vector<Request<Material>*> > grps;
   for (it = commods_.begin(); it != commods_.end(); ++it) {
     std::string commod = it->first;
     CommodDetail d = it->second;
     for (int i = 0; i < amt / quanta; i++) {
-      std::cout << "  - " << amt << " kg of " << commod << "\n";
+      LG(INFO3) << "  - one " << amt << " kg request of " << commod;
       Material::Ptr m = Material::CreateUntracked(quanta, d.comp);
-      port->AddRequest(m, this, commod, exclusive);
+      grps[i].push_back(port->AddRequest(m, this, commod, exclusive));
     }
   }
 
-  CapacityConstraint<Material> cc(amt);
-  port->AddConstraint(cc);
+  std::map<int, std::vector<Request<Material>*> >::iterator grpit;
+  for (grpit = grps.begin(); grpit != grps.end(); ++grpit) {
+    port->AddMutualReqs(grpit->second);
+  }
   ports.insert(port);
 
   return ports;
@@ -72,8 +85,8 @@ void BuyPolicy::AcceptMatlTrades(
   rsrc_commod_.clear();
   for (it = resps.begin(); it != resps.end(); ++it) {
     rsrc_commod_[it->second] = it->first.request->commodity();
-    std::cout << "policy " << name_ << " got " << it->second->quantity()
-              << " kg of " << it->first.request->commodity() << "\n";
+    LGH(INFO2) << "got " << it->second->quantity() << " kg of "
+               << it->first.request->commodity();
     buf_->Push(it->second);
   }
 }
@@ -83,6 +96,8 @@ void BuyPolicy::AdjustMatlPrefs(PrefMap<Material>::type& prefs) {
   for (it = prefs.begin(); it != prefs.end(); ++it) {
     Request<Material>* r = it->first;
     double pref = commods_[r->commodity()].pref;
+    LGH(INFO4) << "setting prefs for " << r->target()->quantity() << " kg bid for "
+               << r->commodity() << " to " << pref;
     std::map<Bid<Material>*, double>::iterator it2;
     std::map<Bid<Material>*, double> bids = it->second;
     for (it2 = bids.begin(); it2 != bids.end(); ++it2) {
@@ -124,7 +139,7 @@ BatchReactor::BatchReactor(cyclus::Context* ctx)
 
 void BatchReactor::EnterNotify() {
   cyclus::Facility::EnterNotify();
-  invpolicy_.Init(&reserves_, "reserves", batch_size_);
+  invpolicy_.Init(&reserves_, "reserves");//, batch_size_);
   corepolicy_.Init(&core_, "core", batch_size_);
   UpdatePolicy();
   context()->RegisterTrader(&invpolicy_);
@@ -926,9 +941,19 @@ void BatchReactor::Refuel_() {
 void BatchReactor::MoveBatchIn_() {
   LOG(cyclus::LEV_DEBUG2, "BReact") << "BatchReactor " << prototype()
                                     << " added a batch to its core.";
+  using cyclus::toolkit::Manifest;
+  using cyclus::ResCast;
   try {
-    std::cout << "spot1\n";
-    core_.Push(reserves_.Pop());
+    Material::Ptr batch = reserves_.Pop<Material>();
+    if (batch->quantity() + cyclus::eps() < batch_size_) {
+      double qty = std::min(reserves_.quantity(),
+          batch_size_ - batch->quantity());
+      Manifest mats = reserves_.PopQty(qty);
+      for (int i = 0; i < mats.size(); i++) {
+        batch->Absorb(ResCast<Material>(mats[i]));
+      }
+    }
+    core_.Push(batch);
   } catch (cyclus::Error& e) {
     e.msg(Agent::InformErrorMsg(e.msg()));
     throw e;
