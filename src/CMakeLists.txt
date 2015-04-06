@@ -8,6 +8,8 @@ USE_CYCLUS("cycamore" "enrichment_facility")
 
 USE_CYCLUS("cycamore" "separations")
 
+USE_CYCLUS("cycamore" "storage")
+
 USE_CYCLUS("cycamore" "sink")
 
 USE_CYCLUS("cycamore" "source")
