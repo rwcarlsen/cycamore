@@ -113,8 +113,11 @@ void Reactor::Tick() {
   if (retired()) {
     int count = 0;
     Record("RETIRED", "");
-    while (Discharge() && core.count() > 0) {
-      std::cout << "count" << count++ << "\n";
+    while (core.count() > 0) {
+      Transmute();
+      if (!Discharge()) {
+        break;
+      }
     }
     return;
   }
@@ -178,7 +181,6 @@ std::set<cyclus::RequestPortfolio<Material>::Ptr> Reactor::GetMatlRequests() {
   int n_assem_order = n_assem_core - core.count() + n_assem_fresh - fresh.count();
 
   if (exit_time() != -1) {
-    std::cout << "n_assem_order=" << n_assem_order << "\n";
     int tleft = exit_time() - context()->time();
     int tleftcycle = cycle_time + refuel_time - cycle_step;
     double ncyclesleft = (double)(tleft - tleftcycle) / (double)(cycle_time + refuel_time);
@@ -187,7 +189,6 @@ std::set<cyclus::RequestPortfolio<Material>::Ptr> Reactor::GetMatlRequests() {
     }
     int nneed = std::max(0.0, ncyclesleft * n_assem_batch - n_assem_fresh);
     n_assem_order = std::min(n_assem_order, nneed);
-    std::cout << "n_assem_order=" << n_assem_order << "\n";
   }
 
   if (n_assem_order == 0) {
@@ -335,11 +336,12 @@ void Reactor::Tock() {
 }
 
 void Reactor::Transmute() {
-  // safe to assume full core.
-  MatVec old = core.PopN(n_assem_batch);
-  MatVec tail = core.PopN(core.count());
+  MatVec old = core.PopN(std::min(n_assem_batch, core.count()));
   core.Push(old);
-  core.Push(tail);
+  if (core.count() > old.size()) {
+    // rotate untransmuted mats back to back of buffer
+    core.Push(core.PopN(core.count() - old.size()));
+  }
 
   std::stringstream ss;
   ss << old.size() << " assemblies";
