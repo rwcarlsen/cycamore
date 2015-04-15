@@ -199,8 +199,8 @@ std::set<cyclus::RequestPortfolio<Material>::Ptr> Reactor::GetMatlRequests() {
     return ports;
   }
 
+  RequestPortfolio<Material>::Ptr port(new RequestPortfolio<Material>());
   for (int i = 0; i < n_assem_order; i++) {
-    RequestPortfolio<Material>::Ptr port(new RequestPortfolio<Material>());
     std::vector<Request<Material>*> mreqs;
     for (int j = 0; j < fuel_incommods.size(); j++) {
       std::string commod = fuel_incommods[j];
@@ -211,9 +211,15 @@ std::set<cyclus::RequestPortfolio<Material>::Ptr> Reactor::GetMatlRequests() {
       mreqs.push_back(r);
     }
     port->AddMutualReqs(mreqs);
-    ports.insert(port);
   }
 
+  double minwant =
+      std::min(0.0, (n_assem_core - core.count()) * assem_size - cyclus::eps());
+  if (minwant > 0) {
+    cyclus::CapacityConstraint<Material> cc(minwant);
+    port->AddConstraint(cc);
+  }
+  ports.insert(port);
   return ports;
 }
 
