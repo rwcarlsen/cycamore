@@ -334,6 +334,9 @@ class Reactor : public cyclus::Facility,
   // id's to the index for the incommod through which they were received.
   #pragma cyclus var {"default": {}, "doc": "This should NEVER be set manually."}
   std::map<int, int> res_indexes;
+
+  // populated lazily and no need to persist.
+  std::set<std::string> uniq_outcommods_;
 };
 
 } // namespace cycamore
