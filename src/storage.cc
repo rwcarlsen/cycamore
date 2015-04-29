@@ -12,9 +12,48 @@ using cyclus::CompMap;
 namespace cycamore {
 
 Storage::Storage(cyclus::Context* ctx)
-    : cyclus::Facility(ctx) {
+    : cyclus::Facility(ctx), readyqty_(0) {
   cyclus::Warn<cyclus::EXPERIMENTAL_WARNING>("the Storage archetype "
                                              "is experimental");
+}
+
+cyclus::Inventories Storage::SnapshotInv() {
+  #pragma cyclus impl snapshotinv cycamore::Storage
+
+  std::map<int, Material::Ptr>::iterator it;
+  std::vector<cyclus::Resource::Ptr> res;
+  for (it = ready_.begin(); it != ready_.end(); ++it) {
+    res.push_back(it->second);
+  }
+  invs["readybuf"] = res;
+
+  return invs;
+}
+
+void Storage::InitInv(cyclus::Inventories& inv) {
+  #pragma cyclus impl initinv cycamore::Storage
+
+  std::vector<cyclus::Resource::Ptr> res = inv["readybuf"];
+  for (int i = 0; i < res.size(); i++) {
+    Material::Ptr m = boost::dynamic_pointer_cast<Material>(res[i]);
+    ready_[m->obj_id()] = m;
+    readyqty_ += m->quantity();
+  }
+}
+
+void Storage::ReadyPush(std::vector<Material::Ptr> mats) {
+  for (int i = 0; i < mats.size(); i++) {
+    Material::Ptr m = mats[i];
+    ready_[m->obj_id()] = m;
+    readyqty_ += m->quantity();
+  }
+}
+
+Material::Ptr Storage::ReadyPop(int obj_id) {
+  Material::Ptr m = ready_[obj_id];
+  ready_.erase(obj_id);
+  readyqty_ -= m->quantity();
+  return m;
 }
 
 void Storage::Tick() {
@@ -24,7 +63,7 @@ void Storage::Tick() {
   }
 
   int npop = time_npop[t];
-  ready.Push(waiting.PopN(npop));
+  ReadyPush(waiting.PopN(npop));
 }
 
 std::set<cyclus::RequestPortfolio<Material>::Ptr>
@@ -32,7 +71,7 @@ Storage::GetMatlRequests() {
   using cyclus::RequestPortfolio;
   std::set<RequestPortfolio<Material>::Ptr> ports;
 
-  double space = invsize - ready.quantity() + waiting.quantity();
+  double space = invsize - readyqty_ + waiting.quantity();
   if (space < cyclus::eps()) {
     return ports;
   }
@@ -58,38 +97,16 @@ void Storage::GetMatlTrades(
     Material::Ptr> >& responses) {
   using cyclus::Trade;
 
-  std::map<int, cyclus::Trade<Material> > tradesbyid;
-  std::set<const cyclus::Trade<Material>* > unsupplied;
   for (int i = 0; i < trades.size(); i++) {
-    // use the obj_id so decay doesn't mess this up
+    Material::Ptr m;
     int id = trades[i].bid->offer()->obj_id();
-    if (tradesbyid.count(id) == 0) {
-      tradesbyid[id] = trades[i];
+    if (ready_.count(id) > 0) {
+      m = ReadyPop(id);
     } else {
-      unsupplied.insert(&trades[i]);
+      // pop from front - smaller obj_id's are older
+      m = ReadyPop(ready_.begin()->first);
     }
-  }
-
-  MatVec mats = ready.PopN(ready.count());
-  for (int i = 0; i < mats.size(); i++) {
-    int id = mats[i]->obj_id();
-    if (tradesbyid.count(id) > 0) {
-      responses.push_back(std::make_pair(tradesbyid[id], mats[i]));
-    } else {
-      ready.Push(mats[i]);
-    }
-  }
-
-  // TODO: Remove the loop below when mutual bids functionality becomes
-  // available and implemented.
-  std::set<const cyclus::Trade<Material>* >::iterator it;
-  for (it = unsupplied.begin(); it != unsupplied.end(); ++it) {
-    cyclus::Trade<Material> td = *(*it);
-    Material::Ptr m = ready.Pop();
-    if (std::abs(m->quantity() - td.amt) > cyclus::eps()) {
-      throw ValueError("prototype " + prototype() + " had the same material object matched to multiple requesters");
-    }
-    responses.push_back(std::make_pair(td, m));
+    responses.push_back(std::make_pair(trades[i], m));
   }
 }
 
@@ -119,12 +136,17 @@ Storage::GetMatlBids(cyclus::CommodMap<Material>::type&
   std::set<BidPortfolio<Material>::Ptr> ports;
 
   std::vector<Request<Material>*>& reqs = commod_requests[outcommod];
-  if (reqs.size() == 0 || ready.quantity() < cyclus::eps()) {
+  if (reqs.size() == 0 || readyqty_ < cyclus::eps() || ready_.size() == 0) {
     return ports;
   }
 
-  MatVec mats = ready.PopN(ready.count());
-  ready.Push(mats);
+
+  MatVec mats;
+  mats.reserve(ready_.size());
+  std::map<int, Material::Ptr>::iterator it;
+  for (it = ready_.begin(); it != ready_.end(); ++it) {
+    mats.push_back(it->second);
+  }
 
   BidPortfolio<Material>::Ptr port(new BidPortfolio<Material>());
 
@@ -143,7 +165,7 @@ Storage::GetMatlBids(cyclus::CommodMap<Material>::type&
     }
   }
 
-  cyclus::CapacityConstraint<Material> cc(ready.quantity());
+  cyclus::CapacityConstraint<Material> cc(readyqty_);
   port->AddConstraint(cc);
   ports.insert(port);
   return ports;
