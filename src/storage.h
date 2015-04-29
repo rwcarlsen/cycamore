@@ -28,9 +28,20 @@ class Storage : public cyclus::Facility {
       std::vector<std::pair<cyclus::Trade<cyclus::Material>,
                             cyclus::Material::Ptr> >& responses);
 
-  #pragma cyclus
+  #pragma cyclus clone
+  #pragma cyclus initfromcopy
+  #pragma cyclus infiletodb
+  #pragma cyclus initfromdb
+  #pragma cyclus schema
+  #pragma cyclus annotations
+  #pragma cyclus snapshot
+  virtual cyclus::Inventories SnapshotInv();
+  virtual void InitInv(cyclus::Inventories& inv);
 
  private:
+  void ReadyPush(std::vector<cyclus::Material::Ptr> mats);
+  cyclus::Material::Ptr ReadyPop(int obj_id);
+
   #pragma cyclus var { \
     "doc": "Name for recipe to be used in requests." \
            " Empty string results in use of an empty dummy recipe.", \
@@ -68,10 +79,8 @@ class Storage : public cyclus::Facility {
   }
   double waitingbuf_size;
 
-  #pragma cyclus var { \
-    "capacity" : "invsize", \
-  }
-  cyclus::toolkit::ResBuf<cyclus::Material> ready;
+  double readyqty_;
+  std::map<int, cyclus::Material::Ptr> ready_;
 
   #pragma cyclus var { \
     "capacity" : "waitingbuf_size", \
