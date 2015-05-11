@@ -1,4 +1,4 @@
-#include "reactor.h"
+#include "fleet_reactor.h"
 
 using cyclus::Material;
 using cyclus::Composition;
@@ -10,8 +10,11 @@ using cyclus::Request;
 
 namespace cycamore {
 
+std::map<std::string, cyclus::Agent*> FleetReactor::masters_;
+
 FleetReactor::FleetReactor(cyclus::Context* ctx)
     : cyclus::Facility(ctx),
+      am_master_(false),
       core_size(0),
       batch_size(0),
       fleet_size(0),
@@ -52,6 +55,12 @@ void FleetReactor::InitFrom(cyclus::QueryableBackend* b) {
 
 void FleetReactor::EnterNotify() {
   cyclus::Facility::EnterNotify();
+
+  // force fleet to load/identify master before anything else starts - this is
+  // important because if initting from a db, a non-master instance might see
+  // that master_ == NULL and set itself as and thik it is (incorrectly) the
+  // master - at least until the proper master sets itself finally.
+  am_master();
 
   // If the user ommitted fuel_prefs, we set it to zeros for each fuel
   // type.  Without this segfaults could occur - yuck.
@@ -104,6 +113,10 @@ void FleetReactor::Decommission() {
 }
 
 void FleetReactor::Tick() {
+  if (!am_master()) {
+    return;
+  }
+
   Discharge();
 
   int t = context()->time();
@@ -146,10 +159,12 @@ std::set<cyclus::RequestPortfolio<Material>::Ptr> FleetReactor::GetMatlRequests(
   using cyclus::RequestPortfolio;
 
   std::set<RequestPortfolio<Material>::Ptr> ports;
-  Material::Ptr m;
+
+  if (!am_master()) {
+    return ports;
+  }
 
   double qty_order = core.space();
-
   if (qty_order < cyclus::eps()) {
     return ports;
   }
@@ -160,7 +175,7 @@ std::set<cyclus::RequestPortfolio<Material>::Ptr> FleetReactor::GetMatlRequests(
     std::string commod = fuel_incommods[j];
     double pref = fuel_prefs[j];
     Composition::Ptr recipe = context()->GetRecipe(fuel_inrecipes[j]);
-    m = Material::CreateUntracked(assem_size, recipe);
+    Material::Ptr m = Material::CreateUntracked(qty_order, recipe);
     bool exclusive = false;
     Request<Material>* r = port->AddRequest(m, this, commod, pref, exclusive);
     mreqs.push_back(r);
@@ -176,6 +191,9 @@ void FleetReactor::GetMatlTrades(
     std::vector<std::pair<cyclus::Trade<Material>, Material::Ptr> >&
         responses) {
   using cyclus::Trade;
+  if (!am_master()) {
+    return;
+  }
 
   std::map<std::string, Material::Ptr> mats = PopSpent();
   for (int i = 0; i < trades.size(); i++) {
@@ -197,6 +215,10 @@ void FleetReactor::AcceptMatlTrades(const std::vector<
   std::vector<std::pair<cyclus::Trade<cyclus::Material>,
                         cyclus::Material::Ptr> >::const_iterator trade;
 
+  if (!am_master()) {
+    throw ValueError("FleetReactor: non-master instance traded");
+  }
+
   for (trade = responses.begin(); trade != responses.end(); ++trade) {
     std::string commod = trade->first.request->commodity();
     Material::Ptr m = trade->second;
@@ -210,9 +232,12 @@ std::set<cyclus::BidPortfolio<Material>::Ptr> FleetReactor::GetMatlBids(
   using cyclus::BidPortfolio;
 
   std::set<BidPortfolio<Material>::Ptr> ports;
+  if (!am_master()) {
+    return ports;
+  }
 
   bool gotmats = false;
-  std::map<std::string, MatVec> all_mats;
+  std::map<std::string, Material::Ptr> all_mats;
 
   if (uniq_outcommods_.empty()) {
     for (int i = 0; i < fuel_outcommods.size(); i++) {
@@ -230,31 +255,19 @@ std::set<cyclus::BidPortfolio<Material>::Ptr> FleetReactor::GetMatlBids(
       all_mats = PeekSpent();
     }
 
-    MatVec mats = all_mats[commod];
-    if (mats.size() == 0) {
+    if (all_mats.count(commod) == 0 || all_mats[commod]->quantity() < cyclus::eps()) {
       continue;
     }
 
+    Material::Ptr m = all_mats[commod];
     BidPortfolio<Material>::Ptr port(new BidPortfolio<Material>());
-
     for (int j = 0; j < reqs.size(); j++) {
       Request<Material>* req = reqs[j];
-      double tot_bid = 0;
-      for (int k = 0; k < mats.size(); k++) {
-        Material::Ptr m = mats[k];
-        tot_bid += m->quantity();
-        port->AddBid(req, m, this, true);
-        if (tot_bid >= req->target()->quantity()) {
-          break;
-        }
-      }
+      bool exclusive = false;
+      port->AddBid(req, m, this, exclusive);
     }
 
-    double tot_qty = 0;
-    for (int j = 0; j < mats.size(); j++) {
-      tot_qty += mats[j]->quantity();
-    }
-    cyclus::CapacityConstraint<Material> cc(tot_qty);
+    cyclus::CapacityConstraint<Material> cc(m->quantity());
     port->AddConstraint(cc);
     ports.insert(port);
   }
@@ -263,46 +276,67 @@ std::set<cyclus::BidPortfolio<Material>::Ptr> FleetReactor::GetMatlBids(
 }
 
 void FleetReactor::Tock() {
+  if (!am_master()) {
+    return;
+  }
   double power = power_cap * fleet_size * core.quantity() / core.capacity();
   cyclus::toolkit::RecordTimeSeries<cyclus::toolkit::POWER>(this, power);
 }
 
-std::map<std::string, MatVec> FleetReactor::PeekSpent() {
-  std::map<std::string, MatVec> mapped;
-  MatVec mats = spent.PopN(spent.count());
-  spent.Push(mats);
-  for (int i = 0; i < mats.size(); i++) {
-    std::string commod = fuel_outcommod(mats[i]);
-    mapped[commod].push_back(mats[i]);
+void FleetReactor::Discharge(double qty) {
+  double qty_discharge = qty;
+  if (qty < 0) {
+    qty_discharge = (core.quantity() / core.capacity()) * batch_size / cycle_time;
   }
-  return mapped;
+
+  qty_discharge = std::min(qty_discharge, core.quantity());
+  if (qty_discharge < cyclus::eps()) {
+    return;
+  }
+
+  double togo = qty_discharge; 
+
+  MatVec mv = core.PopN(core.count());
+  std::list<Material::Ptr> mats;
+  for (int i = 0; i < mv.size(); i++) {
+    mats.push_back(mv[i]);
+  }
+
+  while (togo >= cyclus::eps() && core.quantity() > cyclus::eps()) {
+    Material::Ptr m = mats.front();
+    Composition::Ptr c = context()->GetRecipe(fuel_outrecipe(m));
+
+    if (togo >= m->quantity()) {
+      m->Transmute(c);
+      spent.Push(m);
+      mats.pop_front();
+    } else {
+      spent.Push(m->ExtractQty(togo));
+    }
+  }
+
+  std::list<Material::Ptr>::iterator it;
+  for (it = mats.begin(); it != mats.end(); ++it) {
+    core.Push(*it);
+  }
 }
 
-void FleetReactor::Discharge() {
-  double qty_discharge = (core.quantity() / core.capacity()) * batch_size / cycle_time;
-  qty_discharge = std::min(qty_discharge, core.quantity());
-
-  Material::Ptr m = core.Pop(qty_discharge);
-  m->Transmute(context()->GetRecipe(fuel_outrecipe(old[i])));
-  spent.Push(m);
+bool FleetReactor::CheckDecommissionCondition() {
+  // never decommission the master
+  return !am_master();
 }
 
 void FleetReactor::Retire(double number_of_fleet) {
-  double qty_discharge = number_of_fleet * core_size;
-  qty_discharge = std::min(qty_discharge, core.quantity());
+  double cap_lower = number_of_fleet * core_size;
+  Discharge(cap_lower);
 
-  Material::Ptr m = core.Pop(qty_discharge);
-  m->Transmute(context()->GetRecipe(fuel_outrecipe(old[i])));
-  spent.Push(m);
-
-  core.capacity(core.capacity() - qty_discharge);
-  fleet_size -= number;
+  fleet_size = std::max(0.0, fleet_size - number_of_fleet);
+  core.capacity(fleet_size * core_size);
 }
 
 void FleetReactor::Deploy(double number_of_fleet) {
-  double qty_add = number_of_fleet * core_size;
-  core.capacity(core.capacity() + qty_add);
-  fleet_size += number;
+  fleet_size += number_of_fleet;
+  core.capacity(core_size * fleet_size);
 }
 
 std::string FleetReactor::fuel_incommod(Material::Ptr m) {
@@ -354,6 +388,12 @@ void FleetReactor::index_res(cyclus::Resource::Ptr m, std::string incommod) {
   }
   throw ValueError(
       "cycamore::FleetReactor - received unsupported incommod material");
+}
+
+std::map<std::string, Material::Ptr> FleetReactor::PeekSpent() {
+  std::map<std::string, Material::Ptr> mats = PopSpent();
+  PushSpent(mats);
+  return mats;
 }
 
 std::map<std::string, Material::Ptr> FleetReactor::PopSpent() {

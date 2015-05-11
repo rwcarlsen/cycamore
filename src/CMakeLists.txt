@@ -7,6 +7,8 @@ SET(CYCLUS_CUSTOM_HEADERS "cycamore_version.h")
 
 USE_CYCLUS("cycamore" "reactor")
 
+USE_CYCLUS("cycamore" "fleet_reactor")
+
 USE_CYCLUS("cycamore" "fuel_fab")
 
 USE_CYCLUS("cycamore" "enrichment")
