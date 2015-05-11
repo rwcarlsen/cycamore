@@ -41,6 +41,7 @@ class Storage : public cyclus::Facility {
  private:
   void ReadyPush(std::vector<cyclus::Material::Ptr> mats);
   cyclus::Material::Ptr ReadyPop(int obj_id);
+  cyclus::Material::Ptr ReadyPopQty(double qty);
 
   #pragma cyclus var { \
     "doc": "Name for recipe to be used in requests." \
@@ -72,6 +73,11 @@ class Storage : public cyclus::Facility {
     "default" : 1e299, \
   }
   double invsize;
+
+  #pragma cyclus var { \
+    "default" : True, \
+  }
+  bool discrete;
 
   #pragma cyclus var { \
     "internal": True, \

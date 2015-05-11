@@ -46,6 +46,7 @@ class FleetReactor : public cyclus::Facility,
     if (am_master_) {
       masters_[prototype()] = this;
     } else if (masters_.count(prototype()) == 0) {
+      std::cout << prototype() << " got new master\n";
       masters_[prototype()] = this;
       am_master_ = true;
     }
