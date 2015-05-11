@@ -34,40 +34,55 @@ class FleetReactor : public cyclus::Facility,
 
   virtual void Build(Agent* parent);
   virtual void Decommission();
+  virtual bool CheckDecommissionCondition();
 
  private:
+  bool am_master() {
+    if (am_master_) {
+      masters_[prototype()] = this;
+    } else if (masters_.count(prototype()) == 0) {
+      masters_[prototype()] = this;
+      am_master_ = true;
+    }
+    return am_master_;
+  }
+
+  static std::map<std::string, cyclus::Agent*> masters_;
+
+  // this is necessary for cross snapshot-init to remember which agent is the
+  // master because the master's state evolves differently and so must be the
+  // same instance from init to init.
+  #pragma cyclus var {"default": False, "internal": True}
+  bool am_master_;
+
   std::string fuel_incommod(cyclus::Material::Ptr m);
   std::string fuel_outcommod(cyclus::Material::Ptr m);
   std::string fuel_inrecipe(cyclus::Material::Ptr m);
   std::string fuel_outrecipe(cyclus::Material::Ptr m);
   double fuel_pref(cyclus::Material::Ptr m);
 
-  bool retired() {
-    return exit_time() != -1 && context()->time() >= exit_time();
-  }
-
   /// Store fuel info index for the given resource received on incommod.
   void index_res(cyclus::Resource::Ptr m, std::string incommod);
 
-  /// Discharge a batch from the core if there is room in the spent fuel
-  /// inventory.  Returns true if a batch was successfully discharged.
-  void Discharge();
+  /// Discharge some quantity of material from the core.  If qty is less than
+  /// zero (default), a time step worth of burning/transmuting/discharging is
+  /// performed for all material.
+  void Discharge(double qty=-1);
 
   void Retire(double number_of_fleet);
   void Deploy(double number_of_fleet);
 
   /// Complement of PopSpent - must be called with all materials passed that
   /// were not traded away to other agents.
-  void PushSpent(std::map<std::string, cyclus::toolkit::MatVec> leftover);
+  void PushSpent(std::map<std::string, cyclus::Material::Ptr> leftover);
 
   /// Returns all spent assemblies indexed by outcommod - removing them from
   /// the spent fuel buffer.
-  std::map<std::string, cyclus::toolkit::MatVec> PopSpent();
+  std::map<std::string, cyclus::Material::Ptr> PopSpent();
 
   /// Returns all spent assemblies indexed by outcommod without removing them
   /// from the spent fuel buffer.
-  std::map<std::string, cyclus::toolkit::MatVec> PeekSpent();
-
+  std::map<std::string, cyclus::Material::Ptr> PeekSpent();
 
   //////////// power params ////////////
   #pragma cyclus var { \
@@ -202,7 +217,10 @@ class FleetReactor : public cyclus::Facility,
   #pragma cyclus var {"default": {}, "doc": "This should NEVER be set manually."}
   std::map<int, int> res_indexes;
 
-  // populated lazily and no need to persist.
+
+  // populated lazily and no need to persist.  In case we have the same out
+  // commod for separate in commods of fuel, we don't want to double bid.  So
+  // this is used to loop over unique out commods only.
   std::set<std::string> uniq_outcommods_;
 };
 
