@@ -10,7 +10,7 @@ using cyclus::Request;
 
 namespace cycamore {
 
-std::map<std::string, cyclus::Agent*> FleetReactor::masters_;
+std::map<std::string, FleetReactor*> FleetReactor::masters_;
 
 FleetReactor::FleetReactor(cyclus::Context* ctx)
     : cyclus::Facility(ctx),
@@ -104,11 +104,11 @@ void FleetReactor::EnterNotify() {
 
 void FleetReactor::Build(cyclus::Agent* parent) {
   cyclus::Facility::Build(parent);
-  Deploy(1);
+  master()->Deploy(1);
 }
 
 void FleetReactor::Decommission() {
-  Retire(1);
+  master()->Retire(1);
   cyclus::Facility::Decommission();
 }
 
@@ -162,6 +162,8 @@ std::set<cyclus::RequestPortfolio<Material>::Ptr> FleetReactor::GetMatlRequests(
 
   if (!am_master()) {
     return ports;
+  } else if (exit_time() != -1 && context()->time() >= exit_time()) {
+    return ports;
   }
 
   double qty_order = core.space();
@@ -192,7 +194,7 @@ void FleetReactor::GetMatlTrades(
         responses) {
   using cyclus::Trade;
   if (!am_master()) {
-    return;
+    throw ValueError("FleetReactor: non-master instance cannot supply material");
   }
 
   std::map<std::string, Material::Ptr> mats = PopSpent();
@@ -216,7 +218,7 @@ void FleetReactor::AcceptMatlTrades(const std::vector<
                         cyclus::Material::Ptr> >::const_iterator trade;
 
   if (!am_master()) {
-    throw ValueError("FleetReactor: non-master instance traded");
+    throw ValueError("FleetReactor: non-master instance cannot accept material");
   }
 
   for (trade = responses.begin(); trade != responses.end(); ++trade) {
@@ -284,10 +286,13 @@ void FleetReactor::Tock() {
 }
 
 void FleetReactor::Discharge(double qty) {
+
   double qty_discharge = qty;
   if (qty < 0) {
-    qty_discharge = (core.quantity() / core.capacity()) * batch_size / cycle_time;
+    qty_discharge = (core.quantity() / core.capacity()) * batch_size / cycle_time * fleet_size;
+    std::cout << prototype() << " is discharging default qty for " << fleet_size << " reactors\n";
   }
+  std::cout << prototype() << " discharge qty is " << qty_discharge << "\n";
 
   qty_discharge = std::min(qty_discharge, core.quantity());
   if (qty_discharge < cyclus::eps()) {
@@ -309,32 +314,42 @@ void FleetReactor::Discharge(double qty) {
     if (togo >= m->quantity()) {
       m->Transmute(c);
       spent.Push(m);
-      mats.pop_front();
     } else {
-      spent.Push(m->ExtractQty(togo));
+      Material::Ptr partial = m->ExtractQty(togo);
+      partial->Transmute(c);
+      spent.Push(partial);
+      core.Push(m);
     }
-  }
-
-  std::list<Material::Ptr>::iterator it;
-  for (it = mats.begin(); it != mats.end(); ++it) {
-    core.Push(*it);
+    mats.pop_front();
   }
 }
 
 bool FleetReactor::CheckDecommissionCondition() {
   // never decommission the master
-  return !am_master();
+  return !am_master() || core.count() + spent.count() == 0;
 }
 
 void FleetReactor::Retire(double number_of_fleet) {
   double cap_lower = number_of_fleet * core_size;
+  std::cout << "retireing " << cap_lower << " core size\n";
+  std::cout << "spot0a core.qty=" << core.quantity() << "\n";
   Discharge(cap_lower);
+  std::cout << "spot0b core.qty=" << core.quantity() << "\n";
 
   fleet_size = std::max(0.0, fleet_size - number_of_fleet);
+  std::cout << "spot1 core.qty=" << core.quantity() << "\n";
+  std::cout << "spot1 setting core.cap=" << fleet_size * core_size << "\n";
   core.capacity(fleet_size * core_size);
+
+  // Being retired means this instance is being deallocated and can no longer
+  // act as master for future instances of this prototype.
+  if (am_master()) {
+    masters_.erase(prototype());
+  }
 }
 
 void FleetReactor::Deploy(double number_of_fleet) {
+  std::cout << prototype() << " is deploying " << number_of_fleet << " reactors\n";
   fleet_size += number_of_fleet;
   core.capacity(core_size * fleet_size);
 }

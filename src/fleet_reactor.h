@@ -37,6 +37,11 @@ class FleetReactor : public cyclus::Facility,
   virtual bool CheckDecommissionCondition();
 
  private:
+  FleetReactor* master() {
+    am_master();
+    return masters_[prototype()];
+  }
+
   bool am_master() {
     if (am_master_) {
       masters_[prototype()] = this;
@@ -47,7 +52,7 @@ class FleetReactor : public cyclus::Facility,
     return am_master_;
   }
 
-  static std::map<std::string, cyclus::Agent*> masters_;
+  static std::map<std::string, FleetReactor*> masters_;
 
   // this is necessary for cross snapshot-init to remember which agent is the
   // master because the master's state evolves differently and so must be the
