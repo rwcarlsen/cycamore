@@ -109,6 +109,7 @@ void FleetReactor::Build(cyclus::Agent* parent) {
 
 void FleetReactor::Decommission() {
   master()->Retire(1);
+
   cyclus::Facility::Decommission();
 }
 
@@ -117,9 +118,9 @@ void FleetReactor::Tick() {
     return;
   }
 
-  Discharge();
-
   int t = context()->time();
+
+  Discharge();
 
   // update preferences
   for (int i = 0; i < pref_change_times.size(); i++) {
@@ -162,8 +163,6 @@ std::set<cyclus::RequestPortfolio<Material>::Ptr> FleetReactor::GetMatlRequests(
 
   if (!am_master()) {
     return ports;
-  } else if (exit_time() != -1 && context()->time() >= exit_time()) {
-    return ports;
   }
 
   double qty_order = core.space();
@@ -201,9 +200,14 @@ void FleetReactor::GetMatlTrades(
   for (int i = 0; i < trades.size(); i++) {
     std::string commod = trades[i].request->commodity();
     double amt = trades[i].amt;
+    if (mats.count(commod) == 0 || mats[commod]->quantity() < amt) {
+      throw ValueError("FleetReactor: overmatched on material to supply");
+    }
+
     Material::Ptr m = mats[commod];
     if (amt >= m->quantity()) {
       responses.push_back(std::make_pair(trades[i], m));
+      mats.erase(commod);
       res_indexes.erase(m->obj_id());
     } else {
       responses.push_back(std::make_pair(trades[i], m->ExtractQty(amt)));
@@ -255,6 +259,7 @@ std::set<cyclus::BidPortfolio<Material>::Ptr> FleetReactor::GetMatlBids(
       continue;
     } else if (!gotmats) {
       all_mats = PeekSpent();
+      gotmats = true;
     }
 
     if (all_mats.count(commod) == 0 || all_mats[commod]->quantity() < cyclus::eps()) {
@@ -266,7 +271,8 @@ std::set<cyclus::BidPortfolio<Material>::Ptr> FleetReactor::GetMatlBids(
     for (int j = 0; j < reqs.size(); j++) {
       Request<Material>* req = reqs[j];
       bool exclusive = false;
-      port->AddBid(req, m, this, exclusive);
+      Material::Ptr bm = Material::CreateUntracked(req->target()->quantity(), m->comp());
+      port->AddBid(req, bm, this, exclusive);
     }
 
     cyclus::CapacityConstraint<Material> cc(m->quantity());
@@ -283,16 +289,18 @@ void FleetReactor::Tock() {
   }
   double power = power_cap * fleet_size * core.quantity() / core.capacity();
   cyclus::toolkit::RecordTimeSeries<cyclus::toolkit::POWER>(this, power);
+
+  // retire one reactors worth of capacity if the master is at its exit time
+  if (exit_time() != -1 && context()->time() == exit_time()) {
+    Retire(1);
+  }
 }
 
 void FleetReactor::Discharge(double qty) {
-
   double qty_discharge = qty;
   if (qty < 0) {
     qty_discharge = (core.quantity() / core.capacity()) * batch_size / cycle_time * fleet_size;
-    std::cout << prototype() << " is discharging default qty for " << fleet_size << " reactors\n";
   }
-  std::cout << prototype() << " discharge qty is " << qty_discharge << "\n";
 
   qty_discharge = std::min(qty_discharge, core.quantity());
   if (qty_discharge < cyclus::eps()) {
@@ -307,49 +315,42 @@ void FleetReactor::Discharge(double qty) {
     mats.push_back(mv[i]);
   }
 
-  while (togo >= cyclus::eps() && core.quantity() > cyclus::eps()) {
+  while (togo >= cyclus::eps() && mats.size() > 0) {
     Material::Ptr m = mats.front();
     Composition::Ptr c = context()->GetRecipe(fuel_outrecipe(m));
 
     if (togo >= m->quantity()) {
       m->Transmute(c);
       spent.Push(m);
+      togo -= m->quantity();
+      mats.pop_front();
     } else {
       Material::Ptr partial = m->ExtractQty(togo);
       partial->Transmute(c);
       spent.Push(partial);
-      core.Push(m);
+      togo -= partial->quantity();
+      break;
     }
-    mats.pop_front();
+  }
+
+  std::list<Material::Ptr>::iterator it;
+  for (it = mats.begin(); it != mats.end(); ++it) {
+    core.Push(*it);
   }
 }
 
 bool FleetReactor::CheckDecommissionCondition() {
   // never decommission the master
-  return !am_master() || core.count() + spent.count() == 0;
+  return !am_master() && core.count() + spent.count() == 0;
 }
 
 void FleetReactor::Retire(double number_of_fleet) {
-  double cap_lower = number_of_fleet * core_size;
-  std::cout << "retireing " << cap_lower << " core size\n";
-  std::cout << "spot0a core.qty=" << core.quantity() << "\n";
-  Discharge(cap_lower);
-  std::cout << "spot0b core.qty=" << core.quantity() << "\n";
-
+  Discharge(number_of_fleet * core_size);
   fleet_size = std::max(0.0, fleet_size - number_of_fleet);
-  std::cout << "spot1 core.qty=" << core.quantity() << "\n";
-  std::cout << "spot1 setting core.cap=" << fleet_size * core_size << "\n";
   core.capacity(fleet_size * core_size);
-
-  // Being retired means this instance is being deallocated and can no longer
-  // act as master for future instances of this prototype.
-  if (am_master()) {
-    masters_.erase(prototype());
-  }
 }
 
 void FleetReactor::Deploy(double number_of_fleet) {
-  std::cout << prototype() << " is deploying " << number_of_fleet << " reactors\n";
   fleet_size += number_of_fleet;
   core.capacity(core_size * fleet_size);
 }
@@ -408,6 +409,7 @@ void FleetReactor::index_res(cyclus::Resource::Ptr m, std::string incommod) {
 std::map<std::string, Material::Ptr> FleetReactor::PeekSpent() {
   std::map<std::string, Material::Ptr> mats = PopSpent();
   PushSpent(mats);
+
   return mats;
 }
 

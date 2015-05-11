@@ -12,7 +12,7 @@ using cyclus::CompMap;
 namespace cycamore {
 
 Storage::Storage(cyclus::Context* ctx)
-    : cyclus::Facility(ctx), readyqty_(0) {
+    : cyclus::Facility(ctx), readyqty_(0), discrete(true) {
   cyclus::Warn<cyclus::EXPERIMENTAL_WARNING>("the Storage archetype "
                                              "is experimental");
 }
@@ -53,6 +53,37 @@ Material::Ptr Storage::ReadyPop(int obj_id) {
   Material::Ptr m = ready_[obj_id];
   ready_.erase(obj_id);
   readyqty_ -= m->quantity();
+  return m;
+}
+
+Material::Ptr Storage::ReadyPopQty(double qty) {
+  std::map<int, cyclus::Material::Ptr>::iterator it;
+  Material::Ptr m;
+  bool inited = false;
+  double left = qty;
+  readyqty_ -= qty;
+  for (it = ready_.begin(); it != ready_.end(); ++it) {
+    Material::Ptr next = it->second;
+    if (next->quantity() <= left) {
+      if (!inited) {
+        m = next;
+        inited = true;
+      } else {
+        m->Absorb(next);
+      }
+      ready_.erase(it->first);
+      left -= m->quantity();
+    } else {
+      if (!inited) {
+        m = next->ExtractQty(left);
+        inited = true;
+      } else {
+        m->Absorb(next->ExtractQty(left));
+      }
+      left -= left;
+      break;
+    }
+  }
   return m;
 }
 
@@ -99,12 +130,16 @@ void Storage::GetMatlTrades(
 
   for (int i = 0; i < trades.size(); i++) {
     Material::Ptr m;
-    int id = trades[i].bid->offer()->obj_id();
-    if (ready_.count(id) > 0) {
-      m = ReadyPop(id);
+    if (discrete) {
+      int id = trades[i].bid->offer()->obj_id();
+      if (ready_.count(id) > 0) {
+        m = ReadyPop(id);
+      } else {
+        // pop from front - smaller obj_id's are older
+        m = ReadyPop(ready_.begin()->first);
+      }
     } else {
-      // pop from front - smaller obj_id's are older
-      m = ReadyPop(ready_.begin()->first);
+      m = ReadyPopQty(trades[i].amt);
     }
     responses.push_back(std::make_pair(trades[i], m));
   }
@@ -132,7 +167,7 @@ Storage::GetMatlBids(cyclus::CommodMap<Material>::type&
                           commod_requests) {
   using cyclus::BidPortfolio;
 
-  bool exclusive = true;
+  bool exclusive = discrete;
   std::set<BidPortfolio<Material>::Ptr> ports;
 
   std::vector<Request<Material>*>& reqs = commod_requests[outcommod];
