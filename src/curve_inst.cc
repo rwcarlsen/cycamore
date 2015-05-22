@@ -6,17 +6,17 @@ CurveInst::CurveInst(cyclus::Context* ctx) : cyclus::Institution(ctx) {}
 
 CurveInst::~CurveInst() {}
 
-int Curve::TimeOf(int period) {
+int CurveInst::TimeOf(int period) {
   int dur = context()->sim_info().duration;
-  int nperiods = (dur - 2) / build_period + 1;
-  return context()->time() + 1 + period * build_period;
+  int nperiods = (dur - 2) / deploy_period + 1;
+  return context()->time() + 1 + period * deploy_period;
 };
 
 void CurveInst::Build(cyclus::Agent* parent) {
   cyclus::Institution::Build(parent);
 
   int dur = context()->sim_info().duration;
-  int nperiods = (dur - 2) / build_period + 1;
+  int nperiods = (dur - 2) / deploy_period + 1;
   std::vector<double> totcap;
   totcap.resize(dur);
 
@@ -43,7 +43,7 @@ void CurveInst::Build(cyclus::Agent* parent) {
     if (a->lifetime() != life) {
       a->lifetime(life);
 
-      if (lifetimes[i] == -1) {
+      if (life == -1) {
         ss << "_life_forever";
       } else {
         ss << "_life_" << life;
@@ -63,13 +63,12 @@ void CurveInst::Build(cyclus::Agent* parent) {
       totcapproto[proto][t] += n_build * cap;
     }
     for (int j = 0; j < n_build; j++) {
-      context()->SchedBuild(this, proto, build_time);
+      context()->SchedBuild(this, proto, built_time);
     }
   }
 
 
   // calculate deployment schedule
-  std::map<std::string, std::pair<double, std::vector<double> > >::iterator it;
   for (it = protos.begin(); it != protos.end(); ++it) {
     std::string proto = it->first;
     double cap = it->second.first;
@@ -80,13 +79,17 @@ void CurveInst::Build(cyclus::Agent* parent) {
     for (int i = 0; i < fracs.size(); i++) {
       int build_time = TimeOf(i);
       double frac = fracs[i];
-      double curr_cap = totcap[build_time] / ;
+      double curr_cap = totcapproto[proto][build_time] ;
       double want_cap = curve[i] * frac;
-      double add_cap = want_cap - curr_cap;
-      int nbuild = floor(add_cap / cap + 0.5) * ;
+      double add_cap = std::max(0.0, want_cap - curr_cap);
+      int n_build = floor(add_cap / cap + 0.5);
 
       for (int t = build_time; t < build_time + life; t++) {
         totcap[t] += cap * n_build;
+        totcapproto[proto][t] += cap * n_build;
+      }
+      for (int j = 0; j < n_build; j++) {
+        context()->SchedBuild(this, proto, build_time);
       }
     }
   }
@@ -95,7 +98,7 @@ void CurveInst::Build(cyclus::Agent* parent) {
 void CurveInst::EnterNotify() {
   cyclus::Institution::EnterNotify();
   int dur = context()->sim_info().duration;
-  int nperiods = (dur - 2) / build_period + 1;
+  int nperiods = (dur - 2) / deploy_period + 1;
   if (curve.size() != nperiods) {
     std::stringstream ss;
     ss << "prototype '" << prototype() << "' has " << curve.size()

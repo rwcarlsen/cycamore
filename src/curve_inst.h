@@ -24,6 +24,8 @@ class CurveInst : public cyclus::Institution {
   virtual void EnterNotify();
 
  protected:
+  int TimeOf(int period);
+
   #pragma cyclus var { \
   }
   std::vector<double> curve;

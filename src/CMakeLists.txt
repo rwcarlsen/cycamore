@@ -1,5 +1,7 @@
 # ------------------- Add all Concrete Agents ----------------------------
 
+USE_CYCLUS("cycamore" "curve_inst")
+
 USE_CYCLUS("cycamore" "reactor")
 
 USE_CYCLUS("cycamore" "fuel_fab")
