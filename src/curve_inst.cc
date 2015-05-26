@@ -1,4 +1,10 @@
 #include "curve_inst.h"
+#include "sim_init.h"
+
+using cyclus::SimInit;
+using cyclus::SqliteDb;
+using cyclus::SqlStatement;
+using cyclus::SqliteBack;
 
 namespace cycamore {
 
@@ -21,10 +27,12 @@ void CurveInst::Tock() {
   for (int i = 0; i < proto_priority.size(); i++) {
     nbuild.push_back(0);
   }
+  double growth_cap = 0;
+  int lookdur = deploy_t + lookahead;
   while (!done) {
     SqliteBack memback(":memory:");
     SimInit si;
-    si.Restart(context()->db(), context()->sim_id(), t);
+    si.Restart(context()->db(), context()->sim_id(), t, lookdur);
     si.recorder()->RegisterBackend(&memback);
     for (int i = 0; i < nbuild.size(); i++) {
       // if we use 'this' as parent, then this will be owned and deallocated
@@ -38,9 +46,9 @@ void CurveInst::Tock() {
     iter++;
     // build min req capacity 
     if (iter == 1) {
-      double need_cap = WantCap(deploy_t) - PowerAt(deploy_t);
-      need_cap = std::max(0.0, need_cap);
-      nbuild[0] += static_cast<int>(need_cap / proto_cap[0]);
+      growth_cap = WantCap(deploy_t) - PowerAt(memback.db(), deploy_t);
+      growth_cap = std::max(0.0, growth_cap);
+      nbuild[0] += static_cast<int>(growth_cap / proto_cap[0]);
       continue;
     }
 
@@ -48,17 +56,21 @@ void CurveInst::Tock() {
     for (int look = 0; look < lookahead; look++) {
       int t_check = deploy_t + look;
       double power = PowerAt(memback.db(), t_check);
-      if (power < WantCap(t_check)) {
-        for (int i = 0; i < nbuild.size(); i++) {
+      double shortfall = WantCap(t_check) - power;
+      if (shortfall > 1e-6) {
+        for (int i = 0; i < nbuild.size() - 1; i++) {
+          // make an adjustment to a lower priority facility type if required.
           if (nbuild[i] > 0) {
+            done = false;
             nbuild[i] -= 1;
-            double addcap = WantCap(deploy_t) - PowerOf(nbuild);
-            int nadd = static_cast<int>(addcap / proto_cap[i+1]);
+            int nadd = static_cast<int>(proto_cap[i] / proto_cap[i+1]);
             nbuild[i+1] += nadd;
+            if (PowerOf(nbuild) < growth_cap) {
+              nbuild[i+1] += 1;
+            }
             break;
           }
         }
-        done = false;
       }
     }
   }
@@ -95,7 +107,7 @@ double CurveInst::PowerOf(std::vector<int> nbuild) {
 
 double CurveInst::PowerAt(SqliteDb& db, int t) {
   SqlStatement::Ptr stmt = db.Prepare("SELECT SUM(Value) FROM TimeSeries" + captable + " WHERE Time = ?");
-  stmt->BindInt(t);
+  stmt->BindInt(1, t);
   stmt->Step();
   return stmt->GetDouble(0);
 }

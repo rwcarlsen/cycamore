@@ -21,8 +21,20 @@ class CurveInst : public cyclus::Institution {
 
   virtual void EnterNotify();
 
+  virtual void Tock();
+
  protected:
   int TimeOf(int period);
+
+  int PeriodOf(int t);
+
+  bool WantCap(int t);
+
+  bool OnDeploy(int t);
+
+  double PowerOf(std::vector<int> nbuild);
+
+  double PowerAt(cyclus::SqliteDb& db, int t);
 
   #pragma cyclus var { \
   }
@@ -44,7 +56,7 @@ class CurveInst : public cyclus::Institution {
   std::vector<std::string> proto_priority;
   #pragma cyclus var { \
   }
-  std::vector<std::string> proto_cap;
+  std::vector<double> proto_cap;
   #pragma cyclus var { \
   }
   std::vector<int> proto_avail;
