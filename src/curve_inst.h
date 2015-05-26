@@ -19,8 +19,6 @@ class CurveInst : public cyclus::Institution {
 
   #pragma cyclus
 
-  virtual void Build(cyclus::Agent* parent);
-
   virtual void EnterNotify();
 
  protected:
@@ -34,13 +32,22 @@ class CurveInst : public cyclus::Institution {
   }
   int deploy_period;
 
-  // std::map<prototype, std::pair<capacity, std::vector<frac> > >
   #pragma cyclus var { \
   }
-  std::map<std::string, std::pair<double, std::vector<double> > > protos;
+  int lookahead;
 
-  // std::vector<std::pair<proto, std::pair<number, lifetime> > >
-  std::vector<std::pair<std::string, std::pair<int, int> > > initial_builds;
+  // name of timeseries table to get caps from (e.g. Power, etc.)
+  std::string captable;
+
+  #pragma cyclus var { \
+  }
+  std::vector<std::string> proto_priority;
+  #pragma cyclus var { \
+  }
+  std::vector<std::string> proto_cap;
+  #pragma cyclus var { \
+  }
+  std::vector<int> proto_avail;
 };
 
 }  // namespace cycamore
