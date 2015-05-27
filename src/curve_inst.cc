@@ -111,7 +111,7 @@ void CurveInst::RunSim(SqliteBack* b, const std::vector<int>& nbuild, int deploy
   int lookdur = deploy_t + lookahead;
 
   SimInit si;
-  si.Init(context(), lookdur);
+  si.Init(context()->clone(), lookdur);
   si.recorder()->RegisterBackend(b);
   for (int i = 0; i < nbuild.size(); i++) {
     for (int k = 0; k < nbuild[i]; k++) {
