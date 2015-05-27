@@ -170,10 +170,14 @@ double CurveInst::PowerOf(std::vector<int> nbuild) {
 }
 
 double CurveInst::PowerAt(SqliteDb& db, int t) {
-  SqlStatement::Ptr stmt = db.Prepare("SELECT SUM(Value) FROM TimeSeries" + captable + " WHERE Time = ?");
-  stmt->BindInt(1, t);
-  stmt->Step();
-  return stmt->GetDouble(0);
+  double val = 0;
+  try {
+    SqlStatement::Ptr stmt = db.Prepare("SELECT SUM(Value) FROM TimeSeries" + captable + " WHERE Time = ?");
+    stmt->BindInt(1, t);
+    stmt->Step();
+    val = stmt->GetDouble(0);
+  } catch(cyclus::IOError err) { }
+  return val;
 }
 
 void CurveInst::EnterNotify() {
