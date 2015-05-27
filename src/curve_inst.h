@@ -23,7 +23,13 @@ class CurveInst : public cyclus::Institution {
 
   virtual void Tock();
 
- protected:
+ private:
+  static bool am_ghost_;
+
+  void RunSim(cyclus::SqliteBack* b, const std::vector<int>& nbuild, int deploy_t);
+
+  bool UpdateNbuild(double growth_cap, std::vector<int>& nbuild);
+
   int TimeOf(int period);
 
   int PeriodOf(int t);

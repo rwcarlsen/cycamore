@@ -12,65 +12,51 @@ CurveInst::CurveInst(cyclus::Context* ctx) : cyclus::Institution(ctx) {}
 
 CurveInst::~CurveInst() {}
 
+bool CurveInst::am_ghost_ = false;
+
 void CurveInst::Tock() {
+  if (am_ghost_) {
+    return;
+  }
+
   int t = context()->time();
-  int deploy_t = t + 1;
   if (OnDeploy(t + 2)) {
     context()->Snapshot();
   } else if (!OnDeploy(t + 1)) {
     return;
   }
 
+  int deploy_t = t + 1;
+
   bool done = false;
-  int iter = 0;
   std::vector<int> nbuild;
   for (int i = 0; i < proto_priority.size(); i++) {
     nbuild.push_back(0);
   }
+  int iter = 0;
   double growth_cap = 0;
-  int lookdur = deploy_t + lookahead;
   while (!done) {
-    SqliteBack memback(":memory:");
-    SimInit si;
-    si.Restart(context()->db(), context()->sim_id(), t, lookdur);
-    si.recorder()->RegisterBackend(&memback);
-    for (int i = 0; i < nbuild.size(); i++) {
-      // if we use 'this' as parent, then this will be owned and deallocated
-      // by multiple conterxts - BAD
-      // TODO: figure out a way to not have to use NULL for parent here.
-      si.context()->SchedBuild(NULL, proto_priority[i], deploy_t);
-    }
-    // TODO: figure out way to only run to current time + lookahead
-    si.timer()->RunSim();
-
     iter++;
-    // build min req capacity 
+
+    SqliteBack memback(":memory:");
+    RunSim(&memback, nbuild, deploy_t);
+
+    // calculate min req new capacity for growth and to replace retiring reactors
     if (iter == 1) {
       growth_cap = WantCap(deploy_t) - PowerAt(memback.db(), deploy_t);
       growth_cap = std::max(0.0, growth_cap);
-      nbuild[0] += static_cast<int>(growth_cap / proto_cap[0]);
+      nbuild[0] += static_cast<int>(ceil(growth_cap / proto_cap[0]));
       continue;
     }
 
+    // check for production shortfall and adjust deployments if necessary
     done = true;
     for (int look = 0; look < lookahead; look++) {
       int t_check = deploy_t + look;
       double power = PowerAt(memback.db(), t_check);
       double shortfall = WantCap(t_check) - power;
       if (shortfall > 1e-6) {
-        for (int i = 0; i < nbuild.size() - 1; i++) {
-          // make an adjustment to a lower priority facility type if required.
-          if (nbuild[i] > 0) {
-            done = false;
-            nbuild[i] -= 1;
-            int nadd = static_cast<int>(proto_cap[i] / proto_cap[i+1]);
-            nbuild[i+1] += nadd;
-            if (PowerOf(nbuild) < growth_cap) {
-              nbuild[i+1] += 1;
-            }
-            break;
-          }
-        }
+        done = UpdateNbuild(growth_cap, nbuild);
       }
     }
   }
@@ -78,6 +64,46 @@ void CurveInst::Tock() {
   for (int i = 0; i < nbuild.size(); i++) {
     context()->SchedBuild(this, proto_priority[i], deploy_t);
   }
+
+  context()->NewDatum("CurveInstIters")
+    ->AddVal("Time", context()->time())
+    ->AddVal("AgentId", id())
+    ->AddVal("NSims", iter)
+    ->Record();
+}
+
+void CurveInst::RunSim(SqliteBack* b, const std::vector<int>& nbuild, int deploy_t) {
+  am_ghost_ = true;
+
+  SimInit si;
+  int lookdur = deploy_t + lookahead;
+  si.Restart(context()->db(), context()->sim_id(), context()->time(), lookdur);
+  si.recorder()->RegisterBackend(b);
+  for (int i = 0; i < nbuild.size(); i++) {
+    // if we use 'this' as parent, then this will be owned and deallocated
+    // by multiple conterxts - BAD
+    // TODO: figure out a way to not have to use NULL for parent here.
+    si.context()->SchedBuild(NULL, proto_priority[i], deploy_t);
+  }
+  si.timer()->RunSim();
+
+  am_ghost_ = false;
+}
+
+bool CurveInst::UpdateNbuild(double growth_cap, std::vector<int>& nbuild) {
+  for (int i = 0; i < nbuild.size() - 1; i++) {
+    if (nbuild[i] > 0) {
+      // make an adjustment to a lower priority facility type
+      nbuild[i] -= 1;
+      int nadd = static_cast<int>(proto_cap[i] / proto_cap[i + 1]);
+      nbuild[i + 1] += nadd;
+      if (PowerOf(nbuild) < growth_cap) {
+        nbuild[i + 1] += 1;
+      }
+      return true;
+    }
+  }
+  return false;
 }
 
 int CurveInst::TimeOf(int period) {
