@@ -123,6 +123,7 @@ void CurveInst::RunSim(SqliteBack* b, const std::vector<int>& nbuild, int deploy
   }
   si.timer()->RunSim();
   si.recorder()->Flush();
+  delete si.recorder();
 
   cyclus::Logger::ReportLevel() = lev;
   am_ghost_ = false;
