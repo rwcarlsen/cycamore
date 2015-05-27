@@ -34,7 +34,7 @@ class CurveInst : public cyclus::Institution {
 
   int PeriodOf(int t);
 
-  bool WantCap(int t);
+  double WantCap(int t);
 
   bool OnDeploy(int t);
 
@@ -55,6 +55,9 @@ class CurveInst : public cyclus::Institution {
   int lookahead;
 
   // name of timeseries table to get caps from (e.g. Power, etc.)
+  #pragma cyclus var { \
+    "default": "Power", \
+  }
   std::string captable;
 
   #pragma cyclus var { \
@@ -64,6 +67,7 @@ class CurveInst : public cyclus::Institution {
   }
   std::vector<double> proto_cap;
   #pragma cyclus var { \
+    "default": [], \
   }
   std::vector<int> proto_avail;
 };
