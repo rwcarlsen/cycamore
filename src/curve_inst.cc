@@ -39,7 +39,7 @@ void CurveInst::Tock() {
   bool done = false;
   while (!done) {
     iter++;
-    std::cout << "***** iter " << iter << " *******\n";
+    std::cout << "**** iter " << iter << " ****\n";
 
     SqliteBack memback(":memory:");
     RunSim(&memback, nbuild, deploy_t);
@@ -47,6 +47,7 @@ void CurveInst::Tock() {
     // calculate min req new capacity for growth and to replace retiring reactors
     if (iter == 1) {
       growth_cap = WantCap(deploy_t) - PowerAt(memback.db(), deploy_t);
+      std::cout << "iter1 power = " << PowerAt(memback.db(), deploy_t) << "\n";
       growth_cap = std::max(0.0, growth_cap);
       for (int i = 0; i < proto_avail.size(); i++) {
         if (proto_avail[i] <= deploy_t) {
@@ -55,9 +56,16 @@ void CurveInst::Tock() {
         }
       }
       for (int i = 0; i < nbuild.size(); i++) {
-        std::cout << "nbuild[" << i << "]=" << nbuild[i] << "\n";
+        std::cout << "nbuild[" << i << "] = " << nbuild[i] << "\n";
+      }
+      if (nbuild.size() == 1) {
+        done = true;
       }
       continue;
+    }
+
+    if (nbuild.size() == 1) {
+      done = true;
     }
 
     // check for production shortfall and adjust deployments if necessary
@@ -66,20 +74,22 @@ void CurveInst::Tock() {
       int t_check = deploy_t + look;
       double power = PowerAt(memback.db(), t_check);
       double shortfall = WantCap(t_check) - power;
-      std::cout << "lookahead step " << look << "\n";
-      std::cout << "    power = " << power << "\n";
-      std::cout << "    shortfall = " << shortfall << "\n";
+      std::cout << "power = " << power << "\n";
+      std::cout << "shortfall = " << shortfall << "\n";
       if (shortfall > 1e-6) {
         done = UpdateNbuild(growth_cap, nbuild);
       }
+      if (!done) {
+        break;
+      }
     }
-
     for (int i = 0; i < nbuild.size(); i++) {
-      std::cout << "nbuild[" << i << "]=" << nbuild[i] << "\n";
+      std::cout << "nbuild[" << i << "] = " << nbuild[i] << "\n";
     }
   }
 
   for (int i = 0; i < nbuild.size(); i++) {
+    std::cout << "scheding builds n=" << nbuild[i] << " for t=" << deploy_t << "\n";
     for (int k = 0; k < nbuild[i]; k++) {
       context()->SchedBuild(this, proto_priority[i], deploy_t);
     }
@@ -101,7 +111,7 @@ void CurveInst::RunSim(SqliteBack* b, const std::vector<int>& nbuild, int deploy
   int lookdur = deploy_t + lookahead;
 
   SimInit si;
-  si.Restart(context()->db(), context()->sim_id(), context()->time(), lookdur);
+  si.Init(context(), lookdur);
   si.recorder()->RegisterBackend(b);
   for (int i = 0; i < nbuild.size(); i++) {
     for (int k = 0; k < nbuild[i]; k++) {
@@ -170,10 +180,10 @@ void CurveInst::EnterNotify() {
   cyclus::Institution::EnterNotify();
   int dur = context()->sim_info().duration;
   int nperiods = (dur - 2) / deploy_period + 1;
-  if (curve.size() != nperiods) {
+  if (curve.size() < nperiods) {
     std::stringstream ss;
     ss << "prototype '" << prototype() << "' has " << curve.size()
-       << " curve capacity vals, expected " << nperiods;
+       << " curve capacity vals, expected >= " << nperiods;
     throw cyclus::ValidationError(ss.str());
   } else if (proto_priority.size() != proto_cap.size()) {
     std::stringstream ss;
