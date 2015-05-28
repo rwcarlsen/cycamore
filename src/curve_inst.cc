@@ -8,9 +8,13 @@ using cyclus::SqliteBack;
 
 namespace cycamore {
 
-CurveInst::CurveInst(cyclus::Context* ctx) : cyclus::Institution(ctx) {}
+CurveInst::CurveInst(cyclus::Context* ctx) : cyclus::Institution(ctx), rec_((unsigned int)2) {
+  std::cout << "curveinst living\n";
+}
 
-CurveInst::~CurveInst() {}
+CurveInst::~CurveInst() {
+  std::cout << "curveinst dying\n";
+}
 
 bool CurveInst::am_ghost_ = false;
 
@@ -21,7 +25,7 @@ void CurveInst::Tock() {
 
   int t = context()->time();
   if (OnDeploy(t + 2)) {
-    context()->Snapshot();
+    context()->CloneSim();
     return;
   } else if (!OnDeploy(t + 1)) {
     return;
@@ -37,12 +41,21 @@ void CurveInst::Tock() {
   double growth_cap = 0;
   int iter = 0;
   bool done = false;
-  while (!done) {
+  while (!done) {{
     iter++;
     std::cout << "**** iter " << iter << " ****\n";
 
     SqliteBack memback(":memory:");
     RunSim(&memback, nbuild, deploy_t);
+
+    // DEBUGING:
+    SqlStatement::Ptr stmt = memback.db().Prepare("PRAGMA page_size");
+    stmt->Step();
+    double page_size = stmt->GetInt(0);
+    stmt = memback.db().Prepare("PRAGMA page_count");
+    stmt->Step();
+    double page_count = stmt->GetInt(0);
+    std::cout << "!!!!!!!!!!!!! db size = " << page_count * page_size / 1024.0 / 1024.0 << "\n";
 
     // calculate min req new capacity for growth and to replace retiring reactors
     if (iter == 1) {
@@ -86,7 +99,7 @@ void CurveInst::Tock() {
     for (int i = 0; i < nbuild.size(); i++) {
       std::cout << "nbuild[" << i << "] = " << nbuild[i] << "\n";
     }
-  }
+  }}
 
   for (int i = 0; i < nbuild.size(); i++) {
     std::cout << "scheding builds n=" << nbuild[i] << " for t=" << deploy_t << "\n";
@@ -104,15 +117,17 @@ void CurveInst::Tock() {
 
 void CurveInst::RunSim(SqliteBack* b, const std::vector<int>& nbuild, int deploy_t) {
   am_ghost_ = true;
+  if (rec_.dump_count() < 500) {
+    rec_.set_dump_count(500);
+  }
   cyclus::LogLevel lev = cyclus::Logger::ReportLevel();
   cyclus::Logger::ReportLevel() = cyclus::LEV_ERROR;
 
-  context()->Flush();
   int lookdur = deploy_t + lookahead;
 
   SimInit si;
-  si.Init(context()->clone(), lookdur);
-  si.recorder()->RegisterBackend(b);
+  si.Init(&rec_, context()->GetClone(), lookdur);
+  rec_.RegisterBackend(b);
   for (int i = 0; i < nbuild.size(); i++) {
     for (int k = 0; k < nbuild[i]; k++) {
       // if we use 'this' as parent, then this will be owned and deallocated
@@ -122,8 +137,8 @@ void CurveInst::RunSim(SqliteBack* b, const std::vector<int>& nbuild, int deploy
     }
   }
   si.timer()->RunSim();
-  si.recorder()->Flush();
-  delete si.recorder();
+  rec_.Flush();
+  rec_.Close();
 
   cyclus::Logger::ReportLevel() = lev;
   am_ghost_ = false;

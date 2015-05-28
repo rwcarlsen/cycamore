@@ -106,7 +106,9 @@ class Reactor : public cyclus::Facility,
 
  public:
   Reactor(cyclus::Context* ctx);
-  virtual ~Reactor(){};
+  virtual ~Reactor(){
+    std::cout << "reactor dies\n";
+  };
 
   virtual void Tick();
   virtual void Tock();

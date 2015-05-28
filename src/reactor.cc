@@ -26,6 +26,7 @@ Reactor::Reactor(cyclus::Context* ctx)
   cyclus::Warn<cyclus::EXPERIMENTAL_WARNING>(
       "the Reactor archetype "
       "is experimental");
+  std::cout << "reactor lives\n";
 }
 
 #pragma cyclus def clone cycamore::Reactor

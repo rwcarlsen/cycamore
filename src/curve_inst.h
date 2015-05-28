@@ -70,6 +70,8 @@ class CurveInst : public cyclus::Institution {
     "default": [], \
   }
   std::vector<int> proto_avail;
+
+  cyclus::Recorder rec_;
 };
 
 }  // namespace cycamore
