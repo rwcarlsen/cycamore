@@ -40,8 +40,14 @@ void CurveInst::Tock() {
   int iter = 0;
   while (!done) {
     iter++;
+    std::cout << "** iter " << iter << "\n";
     Short fall = CalcShortfall(deploy_t);
-    done = UpdateNbuild(deploy_t, fall);
+    std::cout << "shortfall=" << fall.shortfall << "\n";
+    if (fall.shortfall > 1e-3 ) {
+      done = UpdateNbuild(deploy_t, fall);
+    } else {
+      done = true;
+    }
   }
 
   // only schedule new/computed builds for the closest coming build period -
@@ -86,13 +92,13 @@ void CurveInst::CalcReqBuilds(int deploy_t) {
   // simulation stored in memback. 
   double newcap = 0;
 
-  for (int i = PeriodOf(deploy_t); i < PeriodOf(deploy_t + lookahead); i++) {
-    if (i < nbuilds.size()) {
+  for (int p = PeriodOf(deploy_t); p <= PeriodOf(deploy_t + lookahead); p++) {
+    if (p < nbuilds.size()) {
       // don't recompute already calculated builds from a previous iteration.
       continue;
     }
 
-    int t = TimeOf(i);
+    int t = TimeOf(p);
 
     // we assume all new capacity we add in this for loop will be operating
     // for the duration of the lookahead window.  So we need to subtract off
@@ -106,7 +112,7 @@ void CurveInst::CalcReqBuilds(int deploy_t) {
     // to deploy to replace 1 facility of higher facility type.  This matters
     // because of rounding issues that may result from mismatched capacity
     // production between the different facility types.
-    growths[i] += growth_cap;
+    growths[p] += growth_cap;
 
     std::vector<int> nbuild(proto_priority.size(), 0);
     for (int i = 0; i < proto_avail.size(); i++) {
@@ -135,7 +141,7 @@ void CurveInst::RunSim(SqliteBack* b, int deploy_t) {
   SimInit si;
   si.Init(&rec_, context()->GetClone(), lookdur);
   rec_.RegisterBackend(b);
-  for (int period = PeriodOf(deploy_t); period < PeriodOf(lookdur); period++) {
+  for (int period = PeriodOf(deploy_t); period < nbuilds.size(); period++) {
     std::vector<int> nbuild = nbuilds[period];
     for (int i = 0; i < nbuild.size(); i++) {
       for (int k = 0; k < nbuild[i]; k++) {
@@ -157,7 +163,8 @@ void CurveInst::RunSim(SqliteBack* b, int deploy_t) {
 bool CurveInst::UpdateNbuild(int deploy_t, Short fall) {
   int period = PeriodOf(deploy_t);
   bool changed = false;
-  for (int p = period; p < PeriodOf(deploy_t + lookahead); p++) {
+  std::cout << "updating build\n";
+  for (int p = period; p <= PeriodOf(deploy_t + lookahead); p++) {
     std::vector<int> nbuild = nbuilds[p];
     double growth_cap = growths[p];
 
@@ -172,8 +179,10 @@ bool CurveInst::UpdateNbuild(int deploy_t, Short fall) {
       int nadd = static_cast<int>(proto_cap[i] / proto_cap[i + 1]);
       nbuild[i + 1] += nadd;
       if (PowerOf(nbuild) < growth_cap) {
+        nadd++;
         nbuild[i + 1] += 1;
       }
+      std::cout << "    shifting build - adding " << nadd << " of " << proto_priority[i+1] << "\n";
       break;
     }
 
