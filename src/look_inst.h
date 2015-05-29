@@ -1,5 +1,5 @@
-#ifndef CYCAMORE_SRC_CURVE_INST_H_
-#define CYCAMORE_SRC_CURVE_INST_H_
+#ifndef CYCAMORE_SRC_LOOK_INST_H_
+#define CYCAMORE_SRC_LOOK_INST_H_
 
 #include <utility>
 #include <set>
@@ -14,11 +14,11 @@ struct Short {
   double shortfall;
 };
 
-class CurveInst : public cyclus::Institution {
+class LookInst : public cyclus::Institution {
  public:
-  CurveInst(cyclus::Context* ctx);
+  LookInst(cyclus::Context* ctx);
 
-  virtual ~CurveInst();
+  virtual ~LookInst();
 
   #pragma cyclus
 
@@ -95,4 +95,4 @@ class CurveInst : public cyclus::Institution {
 
 }  // namespace cycamore
 
-#endif  // CYCAMORE_SRC_CURVE_INST_H_
+#endif  // CYCAMORE_SRC_LOOK_INST_H_

@@ -1,4 +1,4 @@
-#include "curve_inst.h"
+#include "look_inst.h"
 #include "sim_init.h"
 
 using cyclus::SimInit;
@@ -8,17 +8,17 @@ using cyclus::SqliteBack;
 
 namespace cycamore {
 
-CurveInst::CurveInst(cyclus::Context* ctx) : cyclus::Institution(ctx), rec_((unsigned int)2) {
+LookInst::LookInst(cyclus::Context* ctx) : cyclus::Institution(ctx), rec_((unsigned int)2) {
   if (!am_ghost_) {
     ctx->CloneSim(); // guarantee we get clone for time zero
   }
 }
 
-CurveInst::~CurveInst() { }
+LookInst::~LookInst() { }
 
-bool CurveInst::am_ghost_ = false;
+bool LookInst::am_ghost_ = false;
 
-void CurveInst::Tock() {
+void LookInst::Tock() {
   if (am_ghost_) {
     return;
   }
@@ -56,7 +56,7 @@ void CurveInst::Tock() {
     }
   }
 
-  context()->NewDatum("CurveInstIters")
+  context()->NewDatum("LookInstIters")
     ->AddVal("Time", context()->time())
     ->AddVal("AgentId", id())
     ->AddVal("NSims", iter)
@@ -64,7 +64,7 @@ void CurveInst::Tock() {
 }
 
 // calculate integrated shortfall over the entire lookahead window
-Short CurveInst::CalcShortfall(int deploy_t) {
+Short LookInst::CalcShortfall(int deploy_t) {
   SqliteBack memback(":memory:");
   RunSim(&memback, deploy_t);
 
@@ -82,7 +82,7 @@ Short CurveInst::CalcShortfall(int deploy_t) {
 }
 
 // calculate min req new capacity for growth and to replace retiring reactors
-void CurveInst::CalcReqBuilds(int deploy_t) {
+void LookInst::CalcReqBuilds(int deploy_t) {
   SqliteBack memback(":memory:");
   RunSim(&memback, deploy_t);
 
@@ -126,7 +126,7 @@ void CurveInst::CalcReqBuilds(int deploy_t) {
   }
 }
 
-void CurveInst::RunSim(SqliteBack* b, int deploy_t) {
+void LookInst::RunSim(SqliteBack* b, int deploy_t) {
   am_ghost_ = true;
   if (rec_.dump_count() < 500) {
     rec_.set_dump_count(500);
@@ -158,7 +158,7 @@ void CurveInst::RunSim(SqliteBack* b, int deploy_t) {
   am_ghost_ = false;
 }
 
-bool CurveInst::UpdateNbuild(int deploy_t, Short fall) {
+bool LookInst::UpdateNbuild(int deploy_t, Short fall) {
   int period = PeriodOf(deploy_t);
   bool changed = false;
   for (int p = period; p <= PeriodOf(deploy_t + lookahead); p++) {
@@ -190,24 +190,24 @@ bool CurveInst::UpdateNbuild(int deploy_t, Short fall) {
   return !changed;
 }
 
-int CurveInst::TimeOf(int period) {
+int LookInst::TimeOf(int period) {
   return enter_time() + 1 + period * deploy_period;
 };
 
-int CurveInst::PeriodOf(int t) {
+int LookInst::PeriodOf(int t) {
   return (t - enter_time() - 1) / deploy_period;
 };
 
-double CurveInst::WantCap(int t) {
+double LookInst::WantCap(int t) {
   return curve[PeriodOf(t)];
 }
 
-bool CurveInst::OnDeploy(int t) {
+bool LookInst::OnDeploy(int t) {
   return (double)(t - enter_time() - 1) / (double)deploy_period ==
          PeriodOf(t);
 };
 
-double CurveInst::PowerOf(std::vector<int> nbuild) {
+double LookInst::PowerOf(std::vector<int> nbuild) {
   double totcap = 0;
   for (int i = 0; i < nbuild.size(); i++) {
     totcap += nbuild[i] * proto_cap[i];
@@ -215,7 +215,7 @@ double CurveInst::PowerOf(std::vector<int> nbuild) {
   return totcap;
 }
 
-double CurveInst::PowerAt(SqliteDb& db, int t) {
+double LookInst::PowerAt(SqliteDb& db, int t) {
   double val = 0;
   try {
     SqlStatement::Ptr stmt = db.Prepare("SELECT SUM(Value) FROM TimeSeries" + captable + " WHERE Time = ?");
@@ -226,7 +226,7 @@ double CurveInst::PowerAt(SqliteDb& db, int t) {
   return val;
 }
 
-void CurveInst::EnterNotify() {
+void LookInst::EnterNotify() {
   cyclus::Institution::EnterNotify();
   int dur = context()->sim_info().duration;
   int nperiods = (dur - 2) / deploy_period + 1;
@@ -254,8 +254,8 @@ void CurveInst::EnterNotify() {
   }
 }
 
-extern "C" cyclus::Agent* ConstructCurveInst(cyclus::Context* ctx) {
-  return new CurveInst(ctx);
+extern "C" cyclus::Agent* ConstructLookInst(cyclus::Context* ctx) {
+  return new LookInst(ctx);
 }
 
 }  // namespace cycamore

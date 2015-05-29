@@ -1,6 +1,6 @@
 # ------------------- Add all Concrete Agents ----------------------------
 
-USE_CYCLUS("cycamore" "curve_inst")
+USE_CYCLUS("cycamore" "look_inst")
 
 USE_CYCLUS("cycamore" "reactor")
 
