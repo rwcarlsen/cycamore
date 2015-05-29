@@ -9,12 +9,12 @@ using cyclus::SqliteBack;
 namespace cycamore {
 
 CurveInst::CurveInst(cyclus::Context* ctx) : cyclus::Institution(ctx), rec_((unsigned int)2) {
-  std::cout << "curveinst living\n";
+  if (!am_ghost_) {
+    ctx->CloneSim(); // guarantee we get clone for time zero
+  }
 }
 
-CurveInst::~CurveInst() {
-  std::cout << "curveinst dying\n";
-}
+CurveInst::~CurveInst() { }
 
 bool CurveInst::am_ghost_ = false;
 
@@ -41,35 +41,21 @@ void CurveInst::Tock() {
   double growth_cap = 0;
   int iter = 0;
   bool done = false;
-  while (!done) {{
+  while (!done) {
     iter++;
-    std::cout << "**** iter " << iter << " ****\n";
 
     SqliteBack memback(":memory:");
     RunSim(&memback, nbuild, deploy_t);
 
-    // DEBUGING:
-    SqlStatement::Ptr stmt = memback.db().Prepare("PRAGMA page_size");
-    stmt->Step();
-    double page_size = stmt->GetInt(0);
-    stmt = memback.db().Prepare("PRAGMA page_count");
-    stmt->Step();
-    double page_count = stmt->GetInt(0);
-    std::cout << "!!!!!!!!!!!!! db size = " << page_count * page_size / 1024.0 / 1024.0 << "\n";
-
     // calculate min req new capacity for growth and to replace retiring reactors
     if (iter == 1) {
       growth_cap = WantCap(deploy_t) - PowerAt(memback.db(), deploy_t);
-      std::cout << "iter1 power = " << PowerAt(memback.db(), deploy_t) << "\n";
       growth_cap = std::max(0.0, growth_cap);
       for (int i = 0; i < proto_avail.size(); i++) {
         if (proto_avail[i] <= deploy_t) {
           nbuild[i] += static_cast<int>(ceil(growth_cap / proto_cap[i]));
           break;
         }
-      }
-      for (int i = 0; i < nbuild.size(); i++) {
-        std::cout << "nbuild[" << i << "] = " << nbuild[i] << "\n";
       }
       if (nbuild.size() == 1) {
         done = true;
@@ -87,8 +73,6 @@ void CurveInst::Tock() {
       int t_check = deploy_t + look;
       double power = PowerAt(memback.db(), t_check);
       double shortfall = WantCap(t_check) - power;
-      std::cout << "power = " << power << "\n";
-      std::cout << "shortfall = " << shortfall << "\n";
       if (shortfall > 1e-6) {
         done = UpdateNbuild(growth_cap, nbuild);
       }
@@ -96,13 +80,9 @@ void CurveInst::Tock() {
         break;
       }
     }
-    for (int i = 0; i < nbuild.size(); i++) {
-      std::cout << "nbuild[" << i << "] = " << nbuild[i] << "\n";
-    }
-  }}
+  }
 
   for (int i = 0; i < nbuild.size(); i++) {
-    std::cout << "scheding builds n=" << nbuild[i] << " for t=" << deploy_t << "\n";
     for (int k = 0; k < nbuild[i]; k++) {
       context()->SchedBuild(this, proto_priority[i], deploy_t);
     }
