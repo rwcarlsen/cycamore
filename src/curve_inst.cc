@@ -24,6 +24,8 @@ void CurveInst::Tock() {
   }
 
   int t = context()->time();
+  int deploy_t = t + 1;
+  int period = PeriodOf(deploy_t);
   if (OnDeploy(t + 2)) {
     context()->CloneSim();
     return;
@@ -31,45 +33,19 @@ void CurveInst::Tock() {
     return;
   }
 
-  int deploy_t = t + 1;
-  int period = PeriodOf(deploy_t);
+  CalcReqBuilds(deploy_t);
 
-  // calculate min req new capacity for growth and to replace retiring reactors
-  std::map<int, double> growths // map<period, new_growth_cap>
-  if (iter == 1) {
-    SqliteBack memback(":memory:");
-    RunSim(&memback, deploy_t);
-    for (int i = period; i < PeriodOf(deploy_t + lookahead); i++ {
-      growths[i] = CalcReqBuilds(memback.db(), i);
-    }
-  }
-
-  int iter = 0;
+  // deciding deploy ratios not necessary for only one facility type
   bool done = proto_priority.size() == 1;
+  int iter = 0;
   while (!done) {
     iter++;
-    // deciding deploy ratios not necessary for only one reactor type
-    if (proto_priority.size() == 1) {
-      break;
-    }
-
-    double shortfall = CalcShortfall(deploy_t);
-
-    // check for production shortfall and adjust deployments if necessary
-    done = true;
-    for (int look = 0; look < lookahead; look++) {
-      int t_check = deploy_t + look;
-      double power = PowerAt(memback.db(), t_check);
-      double shortfall = WantCap(t_check) - power;
-      if (shortfall > 1e-6) {
-        done = UpdateNbuild(growth_cap, nbuild);
-      }
-      if (!done) {
-        break;
-      }
-    }
+    Short fall = CalcShortfall(deploy_t);
+    done = UpdateNbuild(deploy_t, fall);
   }
 
+  // only schedule new/computed builds for the closest coming build period -
+  // the others may still change more.
   for (int i = 0; i < nbuilds[period].size(); i++) {
     for (int k = 0; k < nbuilds[period][i]; k++) {
       context()->SchedBuild(this, proto_priority[i], deploy_t);
@@ -84,20 +60,24 @@ void CurveInst::Tock() {
 }
 
 // calculate integrated shortfall over the entire lookahead window
-double CurveInst::CalcShortfall(int deploy_t) {
+Short CurveInst::CalcShortfall(int deploy_t) {
   SqliteBack memback(":memory:");
   RunSim(&memback, deploy_t);
 
-  double shortfall = 0;
+  Short fall = {0, 0};
   for (int look = 0; look < lookahead; look++) {
     int t_check = deploy_t + look;
     double power = PowerAt(memback.db(), t_check);
-    shortfall += std::max(0.0, WantCap(t_check) - power);
+    double newshort = std::max(0.0, WantCap(t_check) - power);
+    if (fall.shortfall == 0 && newshort > 1e-6) {
+      fall.start_period = PeriodOf(t_check);
+    }
+    fall.shortfall += newshort;
   }
-  return shortfall;
+  return fall;
 }
 
-// returns the new growth capacity built
+// calculate min req new capacity for growth and to replace retiring reactors
 void CurveInst::CalcReqBuilds(int deploy_t) {
   SqliteBack memback(":memory:");
   RunSim(&memback, deploy_t);
@@ -118,25 +98,31 @@ void CurveInst::CalcReqBuilds(int deploy_t) {
     // for the duration of the lookahead window.  So we need to subtract off
     // the already just added newcap from the shortfall here in order to
     // calculate the correct new capacity to add for this deploy period.
-    double growth_cap = WantCap(t) - PowerAt(db, t) - newcap;
+    double growth_cap = WantCap(t) - PowerAt(memback.db(), t) - newcap;
     growth_cap = std::max(0.0, growth_cap);
 
-    std::vector<int> nbuild;
+    // a running tally of new growth capacity being deployed by this agent is
+    // necessary in order to know how many facilities of lower priority type
+    // to deploy to replace 1 facility of higher facility type.  This matters
+    // because of rounding issues that may result from mismatched capacity
+    // production between the different facility types.
+    growths[i] += growth_cap;
+
+    std::vector<int> nbuild(proto_priority.size(), 0);
     for (int i = 0; i < proto_avail.size(); i++) {
-      nbuild.push_back(0);
       if (proto_avail[i] <= t) {
         int nadd = static_cast<int>(ceil(growth_cap / proto_cap[i]));
         nbuild[i] += nadd;
-        newcap += nbuild * proto_cap[i];
+        newcap += nadd * proto_cap[i];
         break;
       }
     }
 
-    nbuilds[i].push_back(nbuild);
+    nbuilds.push_back(nbuild);
   }
 }
 
-void CurveInst::RunSim(SqliteBack* b, const std::vector<int>& nbuild, int deploy_t) {
+void CurveInst::RunSim(SqliteBack* b, int deploy_t) {
   am_ghost_ = true;
   if (rec_.dump_count() < 500) {
     rec_.set_dump_count(500);
@@ -168,20 +154,35 @@ void CurveInst::RunSim(SqliteBack* b, const std::vector<int>& nbuild, int deploy
   am_ghost_ = false;
 }
 
-bool CurveInst::UpdateNbuild(double growth_cap, std::vector<int>& nbuild) {
-  for (int i = 0; i < nbuild.size() - 1; i++) {
-    if (nbuild[i] > 0) {
-      // make an adjustment to a lower priority facility type
+bool CurveInst::UpdateNbuild(int deploy_t, Short fall) {
+  int period = PeriodOf(deploy_t);
+  bool changed = false;
+  for (int p = period; p < PeriodOf(deploy_t + lookahead); p++) {
+    std::vector<int> nbuild = nbuilds[p];
+    double growth_cap = growths[p];
+
+    for (int i = 0; i < nbuild.size() - 1; i++) {
+      if (nbuild[i] == 0) {
+        continue;
+      }
+
+      // adjust toward a lower priority facility type
+      changed = true;
       nbuild[i] -= 1;
       int nadd = static_cast<int>(proto_cap[i] / proto_cap[i + 1]);
       nbuild[i + 1] += nadd;
       if (PowerOf(nbuild) < growth_cap) {
         nbuild[i + 1] += 1;
       }
-      return false;
+      break;
+    }
+
+    if (changed) {
+      nbuilds[p] = nbuild;
+      break;
     }
   }
-  return true; // no changes made to nbuild, we are done.
+  return !changed;
 }
 
 int CurveInst::TimeOf(int period) {

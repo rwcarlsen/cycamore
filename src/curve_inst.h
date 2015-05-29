@@ -9,7 +9,10 @@
 
 namespace cycamore {
 
-typedef std::map<int, std::vector<std::string> > BuildSched;
+struct Short {
+  int start_period;
+  double shortfall;
+};
 
 class CurveInst : public cyclus::Institution {
  public:
@@ -26,9 +29,13 @@ class CurveInst : public cyclus::Institution {
  private:
   static bool am_ghost_;
 
-  void RunSim(cyclus::SqliteBack* b, const std::vector<int>& nbuild, int deploy_t);
+  void RunSim(cyclus::SqliteBack* b, int deploy_t);
 
-  bool UpdateNbuild(double growth_cap, std::vector<int>& nbuild);
+  bool UpdateNbuild(int deploy_t, Short fall);
+
+  Short CalcShortfall(int deploy_t);
+
+  void CalcReqBuilds(int deploy_t);
 
   int TimeOf(int period);
 
@@ -76,6 +83,12 @@ class CurveInst : public cyclus::Institution {
     "internal": True, \
   }
   std::vector<std::vector<int> > nbuilds;
+
+  #pragma cyclus var { \
+    "default": {}, \
+    "internal": True, \
+  }
+  std::map<int, double> growths;
 
   cyclus::Recorder rec_;
 };
