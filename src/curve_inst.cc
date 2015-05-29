@@ -31,41 +31,29 @@ void CurveInst::Tock() {
     return;
   }
 
-  std::vector<int> nbuild;
-  for (int i = 0; i < proto_priority.size(); i++) {
-    nbuild.push_back(0);
+  int deploy_t = t + 1;
+  int period = PeriodOf(deploy_t);
+
+  // calculate min req new capacity for growth and to replace retiring reactors
+  std::map<int, double> growths // map<period, new_growth_cap>
+  if (iter == 1) {
+    SqliteBack memback(":memory:");
+    RunSim(&memback, deploy_t);
+    for (int i = period; i < PeriodOf(deploy_t + lookahead); i++ {
+      growths[i] = CalcReqBuilds(memback.db(), i);
+    }
   }
 
-  int deploy_t = t + 1;
-
-  double growth_cap = 0;
   int iter = 0;
-  bool done = false;
+  bool done = proto_priority.size() == 1;
   while (!done) {
     iter++;
-
-    SqliteBack memback(":memory:");
-    RunSim(&memback, nbuild, deploy_t);
-
-    // calculate min req new capacity for growth and to replace retiring reactors
-    if (iter == 1) {
-      growth_cap = WantCap(deploy_t) - PowerAt(memback.db(), deploy_t);
-      growth_cap = std::max(0.0, growth_cap);
-      for (int i = 0; i < proto_avail.size(); i++) {
-        if (proto_avail[i] <= deploy_t) {
-          nbuild[i] += static_cast<int>(ceil(growth_cap / proto_cap[i]));
-          break;
-        }
-      }
-      if (nbuild.size() == 1) {
-        done = true;
-      }
-      continue;
+    // deciding deploy ratios not necessary for only one reactor type
+    if (proto_priority.size() == 1) {
+      break;
     }
 
-    if (nbuild.size() == 1) {
-      done = true;
-    }
+    double shortfall = CalcShortfall(deploy_t);
 
     // check for production shortfall and adjust deployments if necessary
     done = true;
@@ -82,8 +70,8 @@ void CurveInst::Tock() {
     }
   }
 
-  for (int i = 0; i < nbuild.size(); i++) {
-    for (int k = 0; k < nbuild[i]; k++) {
+  for (int i = 0; i < nbuilds[period].size(); i++) {
+    for (int k = 0; k < nbuilds[period][i]; k++) {
       context()->SchedBuild(this, proto_priority[i], deploy_t);
     }
   }
@@ -93,6 +81,59 @@ void CurveInst::Tock() {
     ->AddVal("AgentId", id())
     ->AddVal("NSims", iter)
     ->Record();
+}
+
+// calculate integrated shortfall over the entire lookahead window
+double CurveInst::CalcShortfall(int deploy_t) {
+  SqliteBack memback(":memory:");
+  RunSim(&memback, deploy_t);
+
+  double shortfall = 0;
+  for (int look = 0; look < lookahead; look++) {
+    int t_check = deploy_t + look;
+    double power = PowerAt(memback.db(), t_check);
+    shortfall += std::max(0.0, WantCap(t_check) - power);
+  }
+  return shortfall;
+}
+
+// returns the new growth capacity built
+void CurveInst::CalcReqBuilds(int deploy_t) {
+  SqliteBack memback(":memory:");
+  RunSim(&memback, deploy_t);
+
+  // newcap tracks how much we've added in total capacity compared to the
+  // simulation stored in memback. 
+  double newcap = 0;
+
+  for (int i = PeriodOf(deploy_t); i < PeriodOf(deploy_t + lookahead); i++) {
+    if (i < nbuilds.size()) {
+      // don't recompute already calculated builds from a previous iteration.
+      continue;
+    }
+
+    int t = TimeOf(i);
+
+    // we assume all new capacity we add in this for loop will be operating
+    // for the duration of the lookahead window.  So we need to subtract off
+    // the already just added newcap from the shortfall here in order to
+    // calculate the correct new capacity to add for this deploy period.
+    double growth_cap = WantCap(t) - PowerAt(db, t) - newcap;
+    growth_cap = std::max(0.0, growth_cap);
+
+    std::vector<int> nbuild;
+    for (int i = 0; i < proto_avail.size(); i++) {
+      nbuild.push_back(0);
+      if (proto_avail[i] <= t) {
+        int nadd = static_cast<int>(ceil(growth_cap / proto_cap[i]));
+        nbuild[i] += nadd;
+        newcap += nbuild * proto_cap[i];
+        break;
+      }
+    }
+
+    nbuilds[i].push_back(nbuild);
+  }
 }
 
 void CurveInst::RunSim(SqliteBack* b, const std::vector<int>& nbuild, int deploy_t) {
@@ -108,12 +149,15 @@ void CurveInst::RunSim(SqliteBack* b, const std::vector<int>& nbuild, int deploy
   SimInit si;
   si.Init(&rec_, context()->GetClone(), lookdur);
   rec_.RegisterBackend(b);
-  for (int i = 0; i < nbuild.size(); i++) {
-    for (int k = 0; k < nbuild[i]; k++) {
-      // if we use 'this' as parent, then this will be owned and deallocated
-      // by multiple conterxts - BAD
-      // TODO: figure out a way to not have to use NULL for parent here.
-      si.context()->SchedBuild(NULL, proto_priority[i], deploy_t);
+  for (int period = PeriodOf(deploy_t); period < PeriodOf(lookdur); period++) {
+    std::vector<int> nbuild = nbuilds[period];
+    for (int i = 0; i < nbuild.size(); i++) {
+      for (int k = 0; k < nbuild[i]; k++) {
+        // if we use 'this' as parent, then this will be owned and deallocated
+        // by multiple conterxts - BAD
+        // TODO: figure out a way to not have to use NULL for parent here.
+        si.context()->SchedBuild(NULL, proto_priority[i], deploy_t);
+      }
     }
   }
   si.timer()->RunSim();

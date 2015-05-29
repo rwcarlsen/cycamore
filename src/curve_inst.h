@@ -71,6 +71,12 @@ class CurveInst : public cyclus::Institution {
   }
   std::vector<int> proto_avail;
 
+  #pragma cyclus var { \
+    "default": [], \
+    "internal": True, \
+  }
+  std::vector<std::vector<int> > nbuilds;
+
   cyclus::Recorder rec_;
 };
 
