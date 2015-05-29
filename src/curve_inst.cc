@@ -40,9 +40,7 @@ void CurveInst::Tock() {
   int iter = 0;
   while (!done) {
     iter++;
-    std::cout << "** iter " << iter << "\n";
     Short fall = CalcShortfall(deploy_t);
-    std::cout << "shortfall=" << fall.shortfall << "\n";
     if (fall.shortfall > 1e-3 ) {
       done = UpdateNbuild(deploy_t, fall);
     } else {
@@ -163,7 +161,6 @@ void CurveInst::RunSim(SqliteBack* b, int deploy_t) {
 bool CurveInst::UpdateNbuild(int deploy_t, Short fall) {
   int period = PeriodOf(deploy_t);
   bool changed = false;
-  std::cout << "updating build\n";
   for (int p = period; p <= PeriodOf(deploy_t + lookahead); p++) {
     std::vector<int> nbuild = nbuilds[p];
     double growth_cap = growths[p];
@@ -182,7 +179,6 @@ bool CurveInst::UpdateNbuild(int deploy_t, Short fall) {
         nadd++;
         nbuild[i + 1] += 1;
       }
-      std::cout << "    shifting build - adding " << nadd << " of " << proto_priority[i+1] << "\n";
       break;
     }
 
