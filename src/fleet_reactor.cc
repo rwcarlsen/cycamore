@@ -15,6 +15,7 @@ std::map<std::string, FleetReactor*> FleetReactor::masters_;
 FleetReactor::FleetReactor(cyclus::Context* ctx)
     : cyclus::Facility(ctx),
       am_master_(false),
+      newfleet_(0),
       core_size(0),
       batch_size(0),
       fleet_size(0),
@@ -104,12 +105,14 @@ void FleetReactor::EnterNotify() {
 
 void FleetReactor::Build(cyclus::Agent* parent) {
   cyclus::Facility::Build(parent);
-  master()->Deploy(1);
+  master()->newfleet_ += 1;
 }
 
 void FleetReactor::Decommission() {
   master()->Retire(1);
-
+  if (am_master()) {
+    throw cyclus::ValueError("FleetReactor master must never be decommissioned");
+  }
   cyclus::Facility::Decommission();
 }
 
@@ -121,6 +124,8 @@ void FleetReactor::Tick() {
   int t = context()->time();
 
   Discharge();
+  Deploy(newfleet_);
+  newfleet_ = 0;
 
   // update preferences
   for (int i = 0; i < pref_change_times.size(); i++) {
@@ -287,8 +292,10 @@ void FleetReactor::Tock() {
   if (!am_master()) {
     return;
   }
-  double power = power_cap * fleet_size * core.quantity() / core.capacity();
+  double fleet_cap = power_cap * fleet_size;
+  double power = fleet_cap * core.quantity() / core.capacity();
   cyclus::toolkit::RecordTimeSeries<cyclus::toolkit::POWER>(this, power);
+  cyclus::toolkit::RecordTimeSeries("FleetReactorCapacity", this, fleet_cap);
 
   // retire one reactors worth of capacity if the master is at its exit time
   if (exit_time() != -1 && context()->time() == exit_time()) {

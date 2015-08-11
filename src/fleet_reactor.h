@@ -44,9 +44,13 @@ class FleetReactor : public cyclus::Facility,
 
   bool am_master() {
     if (am_master_) {
+      if (masters_.count(prototype()) > 0) {
+        // in case another agent incorrectly set itself to master already.
+        masters_[prototype()]->am_master_ = false;
+      }
       masters_[prototype()] = this;
+      am_master_ = true; // in case we set it to false above
     } else if (masters_.count(prototype()) == 0) {
-      std::cout << prototype() << " got new master\n";
       masters_[prototype()] = this;
       am_master_ = true;
     }
@@ -228,6 +232,8 @@ class FleetReactor : public cyclus::Facility,
   // commod for separate in commods of fuel, we don't want to double bid.  So
   // this is used to loop over unique out commods only.
   std::set<std::string> uniq_outcommods_;
+
+  double newfleet_;
 };
 
 } // namespace cycamore
