@@ -384,6 +384,14 @@ class Reactor : public cyclus::Facility,
 
   // populated lazily and no need to persist.
   std::set<std::string> uniq_outcommods_;
+
+  // intra-timestep value doesn't need persistence
+  double old_core_count;
+
+  #pragma cyclus var {"default": 0, "doc": "This should NEVER be set manually", \
+                      "internal": True \
+  }
+  int cycle_count;
 };
 
 } // namespace cycamore

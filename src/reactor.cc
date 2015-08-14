@@ -22,7 +22,8 @@ Reactor::Reactor(cyclus::Context* ctx)
       cycle_step(0),
       power_cap(0),
       power_name("power"),
-      discharged(false) {
+      discharged(false),
+      cycle_count(0) {
   cyclus::Warn<cyclus::EXPERIMENTAL_WARNING>(
       "the Reactor archetype "
       "is experimental");
@@ -103,6 +104,7 @@ bool Reactor::CheckDecommissionCondition() {
 }
 
 void Reactor::Tick() {
+  old_core_count = core.count();
   // The following code must go in the Tick so they fire on the time step
   // following the cycle_step update - allowing for the all reactor events to
   // occur and be recorded on the "beginning" of a time step.  Another reason
@@ -346,14 +348,35 @@ void Reactor::Tock() {
 
   if (cycle_step == 0 && core.count() == n_assem_core) {
     Record("CYCLE_START", "");
+    cycle_count++;
   }
 
+  double genpower = 0;
   if (cycle_step >= 0 && cycle_step < cycle_time &&
       core.count() == n_assem_core) {
-    cyclus::toolkit::RecordTimeSeries<cyclus::toolkit::POWER>(this, power_cap);
-  } else {
-    cyclus::toolkit::RecordTimeSeries<cyclus::toolkit::POWER>(this, 0);
+    genpower = power_cap;
   }
+  cyclus::toolkit::RecordTimeSeries<cyclus::toolkit::POWER>(this, genpower);
+
+  bool offline =
+      ((cycle_step >= 0 && cycle_step < cycle_time) ||  // new reactors without full cores
+       cycle_step >= cycle_time + refuel_time) &&  // old reactors that can't get refuel batches
+      core.count() < n_assem_core;
+
+  context()->NewDatum("ReactorFuelInfo")
+    ->AddVal("Time", context()->time())
+    ->AddVal("Cycle", cycle_count)
+    ->AddVal("Offline", offline)
+    ->AddVal("CycleStep", cycle_step)
+    ->AddVal("CycleTime", cycle_time)
+    ->AddVal("RefuelTime", refuel_time)
+    ->AddVal("AgentId", id())
+    ->AddVal("AssemPerCore", n_assem_core)
+    ->AddVal("AssemPerBatch", n_assem_batch)
+    ->AddVal("NCore", core.count())
+    ->AddVal("NCoreAdd", core.count() - old_core_count)
+    ->AddVal("NFresh", fresh.count())
+    ->Record();
 
   // "if" prevents starting cycle after initial deployment until core is full
   // even though cycle_step is its initial zero.
