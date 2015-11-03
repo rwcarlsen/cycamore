@@ -83,12 +83,6 @@ IF(NOT CYCLUS_DOC_ONLY)
     # Include macros installed with cyclus core
     INCLUDE(UseCyclus)
 
-    # Find LibXML++ and dependencies
-    FIND_PACKAGE(LibXML++ REQUIRED)
-    SET(CYCAMORE_INCLUDE_DIRS ${CYCAMORE_INCLUDE_DIRS} ${LibXML++_INCLUDE_DIR} ${Glibmm_INCLUDE_DIRS} ${LibXML++Config_INCLUDE_DIR})
-    SET(LIBS ${LIBS} ${LibXML++_LIBRARIES})
-    MESSAGE("--LIBS: ${LIBS}")
-
     MESSAGE("--LD_LIBRARY_PATH: $ENV{LD_LIBRARY_PATH}")
 
     # Include the boost header files, system, and filesystem libraries
@@ -99,13 +93,6 @@ IF(NOT CYCLUS_DOC_ONLY)
     SET(LIBS ${LIBS} ${Boost_FILESYSTEM_LIBRARY})
     SET(LIBS ${LIBS} ${Boost_SYSTEM_LIBRARY})
 
-    # find lapack and link to it
-    # note there is no include directory variable:
-    # http://www.cmake.org/cmake/help/v3.0/module/FindLAPACK.html
-    FIND_PACKAGE(LAPACK REQUIRED)
-    set(LIBS ${LIBS} ${LAPACK_LIBRARIES})
-    MESSAGE("\tFound LAPACK Libraries: ${LAPACK_LIBRARIES}")
-
     # Find HDF5
     FIND_PACKAGE(HDF5 REQUIRED)
     ADD_DEFINITIONS(${HDF5_DEFINITIONS})
@@ -115,20 +102,6 @@ IF(NOT CYCLUS_DOC_ONLY)
     MESSAGE("--    HDF5 Include directory: ${HDF5_INCLUDE_DIR}")
     MESSAGE("--    HDF5 Library directories: ${HDF5_LIBRARY_DIRS}")
     MESSAGE("--    HDF5 Libraries: ${HDF5_LIBRARIES}")
-
-    # find coin and link to it
-    FIND_PACKAGE(COIN REQUIRED)
-    SET(CYCAMORE_INCLUDE_DIRS ${CYCAMORE_INCLUDE_DIRS} ${COIN_INCLUDE_DIRS})
-    set(LIBS ${LIBS} ${COIN_LIBRARIES})
-    MESSAGE("--    COIN Root: ${COIN_ROOT}")
-    MESSAGE("--    COIN Include directories: ${COIN_INCLUDE_DIRS}")
-    MESSAGE("--    COIN Libraries: ${COIN_LIBRARIES}")
-
-    FIND_PACKAGE( Sqlite3 REQUIRED )
-    SET(CYCAMORE_INCLUDE_DIRS ${CYCAMORE_INCLUDE_DIRS} ${SQLITE3_INCLUDE_DIR})
-    SET(LIBS ${LIBS} ${SQLITE3_LIBRARIES})
-    MESSAGE("--    SQLITE3 Include directories: ${SQLITE3_INCLUDE_DIR}")
-    MESSAGE("--    SQLITE3 Libraries: ${SQLITE3_LIBRARIES}")
 
     # include all the directories we just found
     INCLUDE_DIRECTORIES(${CYCAMORE_INCLUDE_DIRS})
