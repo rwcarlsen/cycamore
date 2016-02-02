@@ -57,6 +57,11 @@ void Separations::EnterNotify() {
     std::string name = it->first;
     Stream stream = it->second;
     double cap = stream.first;
+
+    double qty = streambufs[name].quantity();
+    ods[name].Init(&hists[name], cap);
+    cap = std::max(qty, qty + ods[name].ToMove(qty));
+
     if (cap >= 0) {
       streambufs[name].capacity(cap);
     }
@@ -186,6 +191,12 @@ void Separations::GetMatlTrades(
         responses) {
   using cyclus::Trade;
 
+  std::map<std::string, double> pre_qtys;
+  std::map<std::string, ResBuf<Material> >::iterator itb;
+  for (itb = streambufs.begin(); itb != streambufs.end(); ++itb) {
+    pre_qtys[itb->first] += itb->second.quantity();
+  }
+
   std::vector<cyclus::Trade<cyclus::Material> >::const_iterator it;
   for (int i = 0; i < trades.size(); i++) {
     std::string commod = trades[i].request->commodity();
@@ -201,6 +212,14 @@ void Separations::GetMatlTrades(
       throw ValueError("invalid commodity " + commod +
                        " on trade matched to prototype " + prototype());
     }
+  }
+
+  for (itb = streambufs.begin(); itb != streambufs.end(); ++itb) {
+    std::string commod = itb->first;
+    cyclus::toolkit::ResBuf<cyclus::Material>& b = itb->second;
+    double qty = b.quantity();
+    ods[commod].UpdateUsage(pre_qtys[commod], b.quantity());
+    b.capacity(std::max(qty, qty + ods[commod].ToMove(qty)));
   }
 }
 

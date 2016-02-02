@@ -146,6 +146,68 @@ TEST(SeparationsTests, Retire) {
     << "total material traded away does not equal total material separated";
   EXPECT_EQ(3.0, qr.rows.size())
       << "failed to discharge all material before decomissioning";
- }  
+}  
+
+TEST(SeparationsTests, Ondemand) {
+  std::string config =
+      "<streams>"
+      "    <item>"
+      "        <commod>stream1</commod>"
+      "        <info>"
+      "            <buf_size>10</buf_size>"
+      "            <efficiencies>"
+      "                <item><comp>Pu239</comp> <eff>.9</eff></item>"
+      "            </efficiencies>"
+      "        </info>"
+      "    </item>"
+      "</streams>"
+      ""
+      "<leftover_commod>waste</leftover_commod>"
+      "<throughput>1e100</throughput>"
+      "<feedbuf_size>1e100</feedbuf_size>"
+      "<feed_commods> <val>feed</val> </feed_commods>"
+     ;
+
+  CompMap m;
+  m[id("u235")] = 0.08;
+  m[id("u238")] = 0.9;
+  m[id("Pu239")] = .01;
+  m[id("Pu240")] = .01;
+  Composition::Ptr c = Composition::CreateFromMass(m);
+
+  int simdur = 10;
+  cyclus::MockSim sim(cyclus::AgentSpec(":cycamore:Separations"), config, simdur);
+  sim.AddSource("feed").recipe("recipe1").Finalize();
+  sim.AddSink("stream1").capacity(100).Finalize();
+  sim.AddRecipe("recipe1", c);
+  int id = sim.Run();
+
+  std::vector<double> want;
+  want.push_back(20);
+  want.push_back(40);
+  want.push_back(80);
+  want.push_back(100);
+  want.push_back(60);
+  want.push_back(40);
+  want.push_back(100);
+  want.push_back(100);
+  want.push_back(100);
+  want.push_back(100);
+  want.push_back(100);
+
+  std::vector<Cond> conds;
+  conds.push_back(Cond("SenderId", "==", id));
+  cyclus::QueryResult qr = sim.db().Query("Transactions", &conds);
+  for (int i = 0; i < qr.rows.size(); i++) {
+    int resid = qr.GetVal<int>("ResourceId", i);
+    Material::Ptr m = sim.GetMaterial(resid);
+    int t = qr.GetVal<int>("Time", i);
+    double got = m->quantity();
+    EXPECT_DOUBLE_EQ(want[i], got) << "t=" << t << ":got " << got << ", want " << want[i];
+  }
+
+}
+
+
 } // namespace cycamore
 

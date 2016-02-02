@@ -198,6 +198,12 @@ class Separations : public cyclus::Facility {
   // custom SnapshotInv and InitInv and EnterNotify are used to persist this
   // state var.
   std::map<std::string, cyclus::toolkit::ResBuf<cyclus::Material> > streambufs;
+
+  #pragma cyclus var { "default":{}, "internal": True}
+  std::map<std::string, std::list<double> > hists;
+
+  std::map<std::string, cyclus::toolkit::Ondemand> ods;
+
 };
 
 }  // namespace cycamore
