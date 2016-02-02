@@ -157,6 +157,9 @@ void FuelFab::EnterNotify() {
        << " fill_commod_prefs vals, expected " << fill_commods.size();
     throw cyclus::ValidationError(ss.str());
   }
+
+  od.Init(&fiss_hist, fiss.capacity());
+  fiss.capacity(od.ToHold(fiss.quantity()));
 }
 
 std::set<cyclus::RequestPortfolio<Material>::Ptr> FuelFab::GetMatlRequests() {
@@ -394,6 +397,8 @@ void FuelFab::GetMatlTrades(
     w_fiss = CosiWeight(fiss.Peek()->comp(), spectrum);
   }
 
+  double pre_fiss_qty = fiss.quantity();
+
   std::vector<cyclus::Trade<cyclus::Material> >::const_iterator it;
   double tot = 0;
   for (int i = 0; i < trades.size(); i++) {
@@ -410,6 +415,7 @@ void FuelFab::GetMatlTrades(
          << throughput;
       throw cyclus::ValueError(ss.str());
     }
+
 
     if (fiss.count() == 0) {
       // use straight filler to satisfy this request
@@ -473,6 +479,10 @@ void FuelFab::GetMatlTrades(
       responses.push_back(std::make_pair(trades[i], m));
     }
   }
+
+  double post_fiss_qty = fiss.quantity();
+  od.UpdateUsage(pre_fiss_qty, post_fiss_qty);
+  fiss.capacity(od.ToHold(post_fiss_qty));
 }
 
 extern "C" cyclus::Agent* ConstructFuelFab(cyclus::Context* ctx) {

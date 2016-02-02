@@ -203,7 +203,7 @@ TEST(SeparationsTests, Ondemand) {
     Material::Ptr m = sim.GetMaterial(resid);
     int t = qr.GetVal<int>("Time", i);
     double got = m->quantity();
-    EXPECT_DOUBLE_EQ(want[i], got) << "t=" << t << ":got " << got << ", want " << want[i];
+    EXPECT_DOUBLE_EQ(want[i], got) << "t=" << t << ": got " << got << ", want " << want[i];
   }
 
 }

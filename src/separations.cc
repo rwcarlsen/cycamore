@@ -60,7 +60,7 @@ void Separations::EnterNotify() {
 
     double qty = streambufs[name].quantity();
     ods[name].Init(&hists[name], cap);
-    cap = std::max(qty, qty + ods[name].ToMove(qty));
+    cap = ods[name].ToHold(qty);
 
     if (cap >= 0) {
       streambufs[name].capacity(cap);
@@ -219,7 +219,7 @@ void Separations::GetMatlTrades(
     cyclus::toolkit::ResBuf<cyclus::Material>& b = itb->second;
     double qty = b.quantity();
     ods[commod].UpdateUsage(pre_qtys[commod], b.quantity());
-    b.capacity(std::max(qty, qty + ods[commod].ToMove(qty)));
+    b.capacity(ods[commod].ToHold(qty));
   }
 }
 
