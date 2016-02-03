@@ -905,7 +905,7 @@ TEST(FuelFabTests, Ondemand) {
      "<throughput>1e100</throughput>"
      ;
 
-  int simdur = 10;
+  int simdur = 16;
   cyclus::MockSim sim(cyclus::AgentSpec(":cycamore:FuelFab"), config, simdur);
   sim.AddSource("fissstream").Finalize();
   sim.AddSource("fillstream").Finalize();
@@ -917,18 +917,20 @@ TEST(FuelFabTests, Ondemand) {
 
   std::vector<double> want_recv;
   want_recv.push_back(.2);
-  want_recv.push_back(1e100);
   want_recv.push_back(.4);
   want_recv.push_back(.8);
   want_recv.push_back(1.6);
   want_recv.push_back(3.2);
-  want_recv.push_back(0);
-  want_recv.push_back(0);
-  want_recv.push_back(0);
-  want_recv.push_back(0);
+  want_recv.push_back(4.408380408829597);
+  want_recv.push_back(0.66387319705680081);
+  want_recv.push_back(2.5361268029431989);
+  want_recv.push_back(7.6083804088295963);
+  want_recv.push_back(2.5361268029431994);
+  want_recv.push_back(2.5361268029431994);
 
   std::vector<Cond> conds;
   conds.push_back(Cond("ReceiverId", "==", id));
+  conds.push_back(Cond("Commodity", "==", std::string("fissstream")));
   cyclus::QueryResult qr = sim.db().Query("Transactions", &conds);
   for (int i = 0; i < qr.rows.size(); i++) {
     int resid = qr.GetVal<int>("ResourceId", i);
@@ -936,7 +938,6 @@ TEST(FuelFabTests, Ondemand) {
     int t = qr.GetVal<int>("Time", i);
     double got = m->quantity();
     EXPECT_DOUBLE_EQ(want_recv[i], got) << i << ". receiving at t=" << t << ": got " << got << ", want " << want_recv[i];
-    std::cout << "receiving: i=" << i << ", t=" << t << "\n";
   }
 
   std::vector<double> want_send;
@@ -945,20 +946,21 @@ TEST(FuelFabTests, Ondemand) {
   want_send.push_back( 31.544164080108011);
   want_send.push_back(63.088328160216022);
   want_send.push_back(100);
-  want_send.push_back(3.2);
-  want_send.push_back(0);
-  want_send.push_back(0);
-  want_send.push_back(0);
-  want_send.push_back(0);
+  want_send.push_back(26.17665632043202);
+  want_send.push_back(100);
+  want_send.push_back(100);
+  want_send.push_back(100);
+  want_send.push_back(100);
+  want_send.push_back(100);
 
   conds.clear();
   conds.push_back(Cond("SenderId", "==", id));
+  conds.push_back(Cond("Commodity", "==", std::string("mox")));
   qr = sim.db().Query("Transactions", &conds);
   for (int i = 0; i < qr.rows.size(); i++) {
     int resid = qr.GetVal<int>("ResourceId", i);
     Material::Ptr m = sim.GetMaterial(resid);
     int t = qr.GetVal<int>("Time", i);
-    std::cout << "sending: i=" << i << ", t=" << t << "\n";
     double got = m->quantity();
     EXPECT_DOUBLE_EQ(want_send[i], got) << i << ". sending at t=" << t << ": got " << got << ", want " << want_send[i];
   }

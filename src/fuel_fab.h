@@ -243,14 +243,16 @@ class FuelFab : public cyclus::Facility {
   }
   std::string spectrum;
 
+  // intra-time-step state - no need to be a state var
+  // map<request, inventory name>
+  std::map<cyclus::Request<cyclus::Material>*, std::string> req_inventories_;
+
+  /// ondemand related stuff:
+
   #pragma cyclus var { "default":[], "internal": True}
   std::list<double> fiss_hist;
 
   cyclus::toolkit::Ondemand od;
-
-  // intra-time-step state - no need to be a state var
-  // map<request, inventory name>
-  std::map<cyclus::Request<cyclus::Material>*, std::string> req_inventories_;
 };
 
 double CosiWeight(cyclus::Composition::Ptr c, const std::string& spectrum);
