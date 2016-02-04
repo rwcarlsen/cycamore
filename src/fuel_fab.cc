@@ -158,7 +158,7 @@ void FuelFab::EnterNotify() {
     throw cyclus::ValidationError(ss.str());
   }
 
-  od.Init(&fiss_hist, fiss.capacity());
+  od.Init(&fiss_hist, fiss.capacity()).usage_buf_frac(1.5);
   fiss.capacity(od.ToHold(fiss.quantity()));
 }
 
@@ -250,6 +250,9 @@ void FuelFab::AcceptMatlTrades(const std::vector<
     } else if (req_inventories_[req] == "topup") {
       topup.Push(m);
     } else if (req_inventories_[req] == "fiss") {
+      if (m->quantity() > fiss.space()) {
+        fiss.capacity(fiss.quantity() + m->quantity());
+      }
       fiss.Push(m);
     } else {
       throw cyclus::ValueError("cycamore::FuelFab was overmatched on requests");

@@ -59,7 +59,7 @@ void Separations::EnterNotify() {
     double cap = stream.first;
 
     double qty = streambufs[name].quantity();
-    ods[name].Init(&hists[name], cap);
+    ods[name].Init(&hists[name], cap).usage_buf_frac(1.5);
     cap = ods[name].ToHold(qty);
 
     if (cap >= 0) {
